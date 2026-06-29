@@ -102,6 +102,138 @@ function exportImage(elementId, filename = "export.png") {
   printWindow.close();
 }
 
+// ---------- LINE Share Utilities ----------
+// แปลง DOM element เป็นรูปภาพแล้วแชร์ LINE (มือถือ) หรือดาวน์โหลด (คอม)
+async function shareElementToLine(elementId, title = "แชร์") {
+  const el = document.getElementById(elementId);
+  if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
+
+  // ใช้ html2canvas ถ้ามี ไม่งั้น fallback ข้อความ
+  let canvas;
+  try {
+    // โหลด html2canvas จาก CDN
+    if (!window.html2canvas) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    canvas = await window.html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+  } catch (e) {
+    // fallback: แชร์ข้อความ
+    const txt = (el.innerText || el.textContent || "").slice(0, 500);
+    const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`;
+    window.open(lineUrl, "_blank");
+    return;
+  }
+
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if (isMobile && navigator.share) {
+    canvas.toBlob(async (blob) => {
+      try {
+        const file = new File([blob], `${title}.png`, { type: "image/png" });
+        await navigator.share({ files: [file], title });
+      } catch {
+        // ถ้า share ไม่ได้ ให้ดาวน์โหลด
+        const a = document.createElement("a");
+        a.href = canvas.toDataURL("image/png");
+        a.download = `${title}.png`;
+        a.click();
+      }
+    }, "image/png");
+  } else {
+    // คอม: ดาวน์โหลดรูป
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = `${title}.png`;
+    a.click();
+  }
+}
+
+// ปุ่ม LINE ขนาดเล็ก (ใช้ใน ExportToolbar และหัวกล่อง)
+function LineShareButton({ elementId, title = "แชร์", small = false }) {
+  const [loading, setLoading] = React.useState(false);
+  return (
+    <button
+      onClick={async () => { setLoading(true); await shareElementToLine(elementId, title); setLoading(false); }}
+      disabled={loading}
+      title="แชร์ LINE"
+      style={{
+        display: "flex", alignItems: "center", gap: small ? 3 : 4,
+        padding: small ? "3px 8px" : "5px 10px",
+        borderRadius: 6, border: "none",
+        background: loading ? "#9ca3af" : "#06C755",
+        color: "#fff", cursor: loading ? "not-allowed" : "pointer",
+        fontSize: small ? 11 : 12, fontWeight: 600,
+        boxShadow: "0 1px 3px rgba(6,199,85,0.3)",
+        transition: "background 0.15s",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <svg width={small ? 12 : 14} height={small ? 12 : 14} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+      </svg>
+      {loading ? "กำลังสร้างรูป..." : "LINE"}
+    </button>
+  );
+}
+
+// แชร์หลาย element รวมกันเป็นรูปเดียว (vertical stack)
+async function shareMultipleElementsToLine(elementIds, title = "แชร์") {
+  const els = elementIds.map(id => document.getElementById(id)).filter(Boolean);
+  if (els.length === 0) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
+
+  if (!window.html2canvas) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  // render แต่ละ element แล้ว stack ลงใน canvas เดียว
+  const canvases = await Promise.all(els.map(el =>
+    window.html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" })
+  ));
+
+  const totalWidth = Math.max(...canvases.map(c => c.width));
+  const totalHeight = canvases.reduce((s, c) => s + c.height + 16, 0);
+  const combined = document.createElement("canvas");
+  combined.width = totalWidth;
+  combined.height = totalHeight;
+  const ctx = combined.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, totalWidth, totalHeight);
+  let y = 0;
+  canvases.forEach(c => {
+    ctx.drawImage(c, 0, y);
+    y += c.height + 16;
+  });
+
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if (isMobile && navigator.share) {
+    combined.toBlob(async (blob) => {
+      try {
+        const file = new File([blob], `${title}.png`, { type: "image/png" });
+        await navigator.share({ files: [file], title });
+      } catch {
+        const a = document.createElement("a");
+        a.href = combined.toDataURL("image/png");
+        a.download = `${title}.png`;
+        a.click();
+      }
+    }, "image/png");
+  } else {
+    const a = document.createElement("a");
+    a.href = combined.toDataURL("image/png");
+    a.download = `${title}.png`;
+    a.click();
+  }
+}
+
 // Print current page as PDF (via browser print dialog)
 // ---------- Print preview: global subscriber pattern ----------
 // printAsPDF ถูกเรียกจากหลายจุดในแอปที่ไม่มี prop เข้าถึง state ของ App โดยตรง
@@ -335,10 +467,10 @@ function handleEnterNavigate(e, onSubmit) {
     onSubmit();
   }
 }
-// ExportToolbar component — renders 3 export buttons for a section
-function ExportToolbar({ onPDF, onExcel, onImage, label = "" }) {
+// ExportToolbar component — renders export buttons for a section
+function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = null, lineTitle = "" }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       {label && <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{label}</span>}
       <button
         onClick={onPDF}
@@ -361,6 +493,7 @@ function ExportToolbar({ onPDF, onExcel, onImage, label = "" }) {
       >
         <Image size={13} /> รูปภาพ
       </button>
+      {lineElementId && <LineShareButton elementId={lineElementId} title={lineTitle || label || "แชร์"} />}
     </div>
   );
 }
@@ -1859,6 +1992,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   // ---------- หมวดหมู่แดชบอร์ด ----------
   const [dashSubTab, setDashSubTab] = useState("purchases"); // "purchases" | "sales" | "expenses" | "stock" | "loans"
   const [expandedStockTypes, setExpandedStockTypes] = useState({}); // { [type]: bool } ติ๊กเลือกเพื่อดูรายการสินค้าในประเภทนั้น
+  const [selectedStockTypes, setSelectedStockTypes] = useState({}); // { [type]: bool } สำหรับ multi-select LINE share
+  const [sharingStockTypes, setSharingStockTypes] = useState(false);
 
   // ---------- ตัวเลือกช่วงเวลา: รายวัน / ช่วงวันที่ (เลือกเอง) / ทั้งหมด ----------
   const today = new Date().toISOString().slice(0, 10);
@@ -2284,7 +2419,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} />
+            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} lineElementId="dash-export-purchases" lineTitle="ยอดซื้อ" />
           </div>
           <div id="dash-export-purchases">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2292,7 +2427,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-  <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามประเภทสินค้า</h3>
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามประเภทสินค้า</h3>
+  <LineShareButton elementId="dash-box-purchase-by-type" title="ยอดซื้อแบ่งตามประเภทสินค้า" small />
+  </div>
+  <div id="dash-box-purchase-by-type">
   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
                   <col style={{ width: "50%" }} />
@@ -2330,10 +2469,15 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </tfoot>
                 )}
               </table>
+  </div>{/* end dash-box-purchase-by-type */}
             </div>
 
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามรายการสินค้า</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามรายการสินค้า</h3>
+              <LineShareButton elementId="dash-box-purchase-by-product" title="ยอดซื้อแบ่งตามรายการสินค้า" small />
+              </div>
+              <div id="dash-box-purchase-by-product">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
                   <col style={{ width: "50%" }} />
@@ -2376,7 +2520,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
           {/* สรุปบิลแยกตามช่องทางชำระ */}
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+              <LineShareButton elementId="dash-box-purchase-by-payment" title="สรุปบิลซื้อแยกตามช่องทางชำระ" small />
+            </div>
+            <div id="dash-box-purchase-by-payment">
             {(() => {
               // จัดกลุ่ม purchases ในช่วง
               const pos = filteredPurchases;
@@ -2438,6 +2586,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                 </div>
               ));
             })()}
+            </div>{/* end dash-box-purchase-by-payment */}
           </div>
           </div>
         </>
@@ -2448,7 +2597,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} />
+            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} lineElementId="dash-export-sales" lineTitle="ยอดขาย" />
           </div>
           <div id="dash-export-sales">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2456,7 +2605,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามประเภทสินค้า</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามประเภทสินค้า</h3>
+                <LineShareButton elementId="dash-box-sale-by-type" title="ยอดขายแบ่งตามประเภทสินค้า" small />
+              </div>
+              <div id="dash-box-sale-by-type">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
                   <tr>
@@ -2488,10 +2641,15 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </tfoot>
                 )}
               </table>
+              </div>
             </div>
 
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามรายการสินค้า</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามรายการสินค้า</h3>
+                <LineShareButton elementId="dash-box-sale-by-product" title="ยอดขายแบ่งตามรายการสินค้า" small />
+              </div>
+              <div id="dash-box-sale-by-product">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500  }}>
                 <thead>
                   <tr>
@@ -2523,6 +2681,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </tfoot>
                 )}
               </table>
+              </div>
             </div>
           </div>
           </div>
@@ -2534,14 +2693,18 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} />
+            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} lineElementId="dash-export-expenses" lineTitle="ค่าใช้จ่าย" />
           </div>
           <div id="dash-export-expenses">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
               {renderCard(expensesCard)}
             </div>
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย</h3>
+                <LineShareButton elementId="dash-box-expense-by-subcat" title="ค่าใช้จ่ายแบ่งตามหมวดหมู่ย่อย" small />
+              </div>
+              <div id="dash-box-expense-by-subcat">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
                   <tr>
@@ -2575,11 +2738,16 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </tfoot>
                 )}
               </table>
+              </div>{/* end dash-box-expense-by-subcat */}
             </div>
 
             {/* สรุปค่าใช้จ่ายแยกตามช่องทางชำระ */}
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
-              <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+                <LineShareButton elementId="dash-box-expense-by-payment" title="สรุปบิลค่าใช้จ่ายแยกตามช่องทางชำระ" small />
+              </div>
+              <div id="dash-box-expense-by-payment">
               {(() => {
                 const exps = (expenses || []).filter(e => inRange(e.billDate || e.date));
                 const entries = [];
@@ -2634,6 +2802,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </div>
                 ));
               })()}
+              </div>{/* end dash-box-expense-by-payment */}
             </div>
           </div>
         </>
@@ -2644,13 +2813,58 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} />
+            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" />
           </div>
           <div id="dash-export-stock">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
             {renderCard(stockCard, true)}
 
           </div>
+
+          {/* แถบ multi-select LINE share */}
+          {(() => {
+            const visibleTypes = stockByType.filter(g => g.items.some(s => s.qty > 0)).map(g => g.type);
+            const allSelected = visibleTypes.length > 0 && visibleTypes.every(t => selectedStockTypes[t]);
+            const anySelected = visibleTypes.some(t => selectedStockTypes[t]);
+            const selectedIds = visibleTypes.filter(t => selectedStockTypes[t]).map(t => `dash-stock-type-${t.replace(/\s/g, "-")}`);
+            return (
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#14532d" }}>
+                  <input type="checkbox" checked={allSelected} onChange={e => {
+                    const next = {};
+                    visibleTypes.forEach(t => { next[t] = e.target.checked; });
+                    setSelectedStockTypes(next);
+                  }} style={{ width: 15, height: 15, accentColor: "#06C755" }} />
+                  เลือกทั้งหมด
+                </label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
+                  {visibleTypes.map(t => (
+                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#166534", background: selectedStockTypes[t] ? "#dcfce7" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#86efac" : "#d1fae5"}`, borderRadius: 6, padding: "3px 9px" }}>
+                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#06C755" }} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+                {anySelected && (
+                  <button
+                    disabled={sharingStockTypes}
+                    onClick={async () => {
+                      setSharingStockTypes(true);
+                      const selectedNames = visibleTypes.filter(t => selectedStockTypes[t]);
+                      await shareMultipleElementsToLine(selectedIds, `สต๊อก — ${selectedNames.join(", ")}`);
+                      setSharingStockTypes(false);
+                    }}
+                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", borderRadius: 7, border: "none", background: sharingStockTypes ? "#9ca3af" : "#06C755", color: "#fff", cursor: sharingStockTypes ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
+                    </svg>
+                    {sharingStockTypes ? "กำลังสร้างรูป..." : `แชร์ที่เลือก (${visibleTypes.filter(t => selectedStockTypes[t]).length})`}
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto" }}>
             <div style={{ background: "#083319", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>มูลค่าสต๊อกรวม</h3>
@@ -2670,8 +2884,35 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   const visibleItems = g.items.filter((s) => s.qty > 0);
                   if (visibleItems.length === 0) return null;
                   const isExpanded = !!expandedStockTypes[g.type];
+                  const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
                   return (
                     <React.Fragment key={g.type}>
+                      {/* hidden div สำหรับ capture รูปแชร์ LINE */}
+                      <tr style={{ display: "none" }}><td><div id={typeId} style={{ background: "#fff", padding: 12, minWidth: 300 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: "#083319", background: "#e6f9f0", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead><tr>
+                            <th style={{ ...thStyle, fontSize: 11 }}>สินค้า</th>
+                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>คงเหลือ</th>
+                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>มูลค่า</th>
+                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>ราคาเฉลี่ย</th>
+                          </tr></thead>
+                          <tbody>{visibleItems.map(s => (
+                            <tr key={s.productId}>
+                              <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#1A6B35" }}>{fmt(s.totalCost)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
+                            </tr>
+                          ))}</tbody>
+                          <tfoot><tr style={{ background: "#1f2937" }}>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5", fontSize: 12 }}>{fmt(g.value)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
+                          </tr></tfoot>
+                        </table>
+                      </div></td></tr>
                       {isExpanded && (
                         <>
                           <tr
@@ -2748,7 +2989,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} />
+            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} lineElementId="dash-export-loans" lineTitle="สินเชื่อ/เงินกู้" />
           </div>
           <div id="dash-export-loans" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
             {renderCard(loanCard, true)}
@@ -2922,6 +3163,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   exportExcel(rows, "เงินหมุนร้าน.xlsx", "เงินหมุน");
                 }}
                 onImage={() => printAsPDF("dash-cashflow", "สรุปเงินหมุนร้าน")}
+                lineElementId="dash-cashflow"
+                lineTitle="สรุปเงินหมุนร้าน"
               />
             </div>
 
@@ -5546,13 +5789,13 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
       accs.size === 0 || (doc.payments||[]).some(p => accs.has(p[field]));
 
     const dayCost = allPurchaseRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "fromStoreBankId"))
+      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "fromStoreBankId"))
       .reduce((s,r)=>s+r.total,0);
     const dayExp  = allExpenseRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "fromStoreBankId"))
+      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "fromStoreBankId"))
       .reduce((s,r)=>s+r.total,0);
     const dayRev  = allSaleRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "toStoreBankId"))
+      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "toStoreBankId"))
       .reduce((s,r)=>s+r.total,0);
     const dayNet  = dayCost + dayExp - dayRev;
 
