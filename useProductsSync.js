@@ -73,7 +73,9 @@ export function useProductsRealtime(setProducts, loaded) {
       .channel('products-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'products' }, (payload) => {
         setProducts((prev) => {
-          if (prev.some((p) => p.id === payload.new.id)) return prev
+          if (prev.some((p) => p.id === payload.new.id)) {
+            return prev.map((p) => p.id === payload.new.id ? fromRow(payload.new) : p)
+          }
           return [...prev, fromRow(payload.new)]
         })
       })
