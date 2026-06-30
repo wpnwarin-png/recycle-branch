@@ -108,26 +108,67 @@ async function shareElementToLine(elementId, title = "แชร์") {
   const el = document.getElementById(elementId);
   if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
 
-  // ใช้ html2canvas ถ้ามี ไม่งั้น fallback ข้อความ
-  let canvas;
-  try {
-    // โหลด html2canvas จาก CDN
-    if (!window.html2canvas) {
+  // โหลด html2canvas จาก CDN
+  if (!window.html2canvas) {
+    try {
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
         s.onload = resolve; s.onerror = reject;
         document.head.appendChild(s);
       });
+    } catch (e) {
+      const txt = (el.innerText || el.textContent || "").slice(0, 500);
+      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
+      return;
     }
-    canvas = await window.html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
-  } catch (e) {
-    // fallback: แชร์ข้อความ
-    const txt = (el.innerText || el.textContent || "").slice(0, 500);
-    const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`;
-    window.open(lineUrl, "_blank");
-    return;
   }
+
+  // ปิด overflow ชั่วคราวบน el และลูกหลานทั้งหมด เพื่อให้ html2canvas capture ครบ
+  const overrideMap = new Map();
+  const fixOverflow = (node) => {
+    if (node.nodeType !== 1) return;
+    const cs = window.getComputedStyle(node);
+    const ox = cs.overflowX, oy = cs.overflowY;
+    if (ox === "auto" || ox === "scroll" || oy === "auto" || oy === "scroll") {
+      overrideMap.set(node, { ox: node.style.overflowX, oy: node.style.overflowY });
+      node.style.overflowX = "visible";
+      node.style.overflowY = "visible";
+    }
+    Array.from(node.children).forEach(fixOverflow);
+  };
+  // เก็บขนาดจริงของ element ก่อน override
+  const origOverflow = { x: el.style.overflowX, y: el.style.overflowY };
+  el.style.overflowX = "visible";
+  el.style.overflowY = "visible";
+  Array.from(el.children).forEach(fixOverflow);
+
+  let canvas;
+  try {
+    canvas = await window.html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      scrollX: 0,
+      scrollY: 0,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth,
+    });
+  } catch (e) {
+    const txt = (el.innerText || el.textContent || "").slice(0, 500);
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
+  } finally {
+    // คืนค่า overflow เดิม
+    el.style.overflowX = origOverflow.x;
+    el.style.overflowY = origOverflow.y;
+    overrideMap.forEach(({ ox, oy }, node) => {
+      node.style.overflowX = ox;
+      node.style.overflowY = oy;
+    });
+  }
+
+  if (!canvas) return;
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   if (isMobile && navigator.share) {
@@ -136,7 +177,6 @@ async function shareElementToLine(elementId, title = "แชร์") {
         const file = new File([blob], `${title}.png`, { type: "image/png" });
         await navigator.share({ files: [file], title });
       } catch {
-        // ถ้า share ไม่ได้ ให้ดาวน์โหลด
         const a = document.createElement("a");
         a.href = canvas.toDataURL("image/png");
         a.download = `${title}.png`;
@@ -144,7 +184,6 @@ async function shareElementToLine(elementId, title = "แชร์") {
       }
     }, "image/png");
   } else {
-    // คอม: ดาวน์โหลดรูป
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
     a.download = `${title}.png`;
@@ -194,10 +233,46 @@ async function shareMultipleElementsToLine(elementIds, title = "แชร์") {
     });
   }
 
+  // helper: ปิด overflow ชั่วคราว คืนค่า map สำหรับ restore
+  const disableOverflow = (el) => {
+    const overrideMap = new Map();
+    const walk = (node) => {
+      if (node.nodeType !== 1) return;
+      const cs = window.getComputedStyle(node);
+      if (cs.overflowX === "auto" || cs.overflowX === "scroll" || cs.overflowY === "auto" || cs.overflowY === "scroll") {
+        overrideMap.set(node, { ox: node.style.overflowX, oy: node.style.overflowY });
+        node.style.overflowX = "visible";
+        node.style.overflowY = "visible";
+      }
+      Array.from(node.children).forEach(walk);
+    };
+    overrideMap.set(el, { ox: el.style.overflowX, oy: el.style.overflowY });
+    el.style.overflowX = "visible";
+    el.style.overflowY = "visible";
+    Array.from(el.children).forEach(walk);
+    return overrideMap;
+  };
+  const restoreOverflow = (overrideMap) => {
+    overrideMap.forEach(({ ox, oy }, node) => {
+      node.style.overflowX = ox;
+      node.style.overflowY = oy;
+    });
+  };
+
   // render แต่ละ element แล้ว stack ลงใน canvas เดียว
-  const canvases = await Promise.all(els.map(el =>
-    window.html2canvas(el, { scale: 2, useCORS: true, backgroundColor: "#ffffff" })
-  ));
+  const canvases = await Promise.all(els.map(async el => {
+    const map = disableOverflow(el);
+    try {
+      return await window.html2canvas(el, {
+        scale: 2, useCORS: true, backgroundColor: "#ffffff",
+        scrollX: 0, scrollY: 0,
+        width: el.scrollWidth, height: el.scrollHeight,
+        windowWidth: el.scrollWidth,
+      });
+    } finally {
+      restoreOverflow(map);
+    }
+  }));
 
   const totalWidth = Math.max(...canvases.map(c => c.width));
   const totalHeight = canvases.reduce((s, c) => s + c.height + 16, 0);
@@ -2866,6 +2941,41 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           })()}
 
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto" }}>
+            {/* hidden divs สำหรับ capture รูปแชร์ LINE — วางนอก table เพื่อไม่ถูกตัดความกว้าง */}
+            <div style={{ position: "absolute", left: -9999, top: 0, width: 480 }}>
+              {stockByType.map((g) => {
+                const visibleItems = g.items.filter((s) => s.qty > 0);
+                if (visibleItems.length === 0) return null;
+                const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
+                return (
+                  <div key={g.type} id={typeId} style={{ background: "#fff", padding: 16, width: 480, fontFamily: "inherit" }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#083319", background: "#e6f9f0", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead><tr>
+                        <th style={{ ...thStyle, fontSize: 12 }}>สินค้า</th>
+                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>คงเหลือ</th>
+                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>มูลค่า</th>
+                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>ราคาเฉลี่ย</th>
+                      </tr></thead>
+                      <tbody>{visibleItems.map(s => (
+                        <tr key={s.productId}>
+                          <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#1A6B35" }}>{fmt(s.totalCost)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
+                        </tr>
+                      ))}</tbody>
+                      <tfoot><tr style={{ background: "#1f2937" }}>
+                        <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5", fontSize: 12 }}>{fmt(g.value)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
+                      </tr></tfoot>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
             <div style={{ background: "#083319", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>มูลค่าสต๊อกรวม</h3>
               <span style={{ fontSize: 12, color: "#e7c9c9" }}>วันที่ {today}</span>
@@ -2884,35 +2994,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   const visibleItems = g.items.filter((s) => s.qty > 0);
                   if (visibleItems.length === 0) return null;
                   const isExpanded = !!expandedStockTypes[g.type];
-                  const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
                   return (
                     <React.Fragment key={g.type}>
-                      {/* hidden div สำหรับ capture รูปแชร์ LINE */}
-                      <tr style={{ display: "none" }}><td><div id={typeId} style={{ background: "#fff", padding: 12, minWidth: 300 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: "#083319", background: "#e6f9f0", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                          <thead><tr>
-                            <th style={{ ...thStyle, fontSize: 11 }}>สินค้า</th>
-                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>คงเหลือ</th>
-                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>มูลค่า</th>
-                            <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>ราคาเฉลี่ย</th>
-                          </tr></thead>
-                          <tbody>{visibleItems.map(s => (
-                            <tr key={s.productId}>
-                              <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#1A6B35" }}>{fmt(s.totalCost)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
-                            </tr>
-                          ))}</tbody>
-                          <tfoot><tr style={{ background: "#1f2937" }}>
-                            <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5", fontSize: 12 }}>{fmt(g.value)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
-                          </tr></tfoot>
-                        </table>
-                      </div></td></tr>
                       {isExpanded && (
                         <>
                           <tr
