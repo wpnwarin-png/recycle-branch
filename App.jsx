@@ -6059,7 +6059,9 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
       - allSaleRows.filter(r => r.date < creditDate && r.payStatus==="paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc,"toStoreBankId")).reduce((s,r)=>s+r.total,0);
 
     const manual = Number(creditManual) || 0;
-    return { dayCost, dayExp, dayRev, dayNet, pendingBefore, manual, total: dayNet + pendingBefore + manual };
+    const rawTotal = dayNet + pendingBefore + manual;
+    const total = Math.floor(rawTotal); // ปัดลงเป็นจำนวนเต็มบาท
+    return { dayCost, dayExp, dayRev, dayNet, pendingBefore, manual, total, rawTotal };
   }, [creditDate, allPurchaseRows, allExpenseRows, allSaleRows, payFlags, creditManual, creditAccounts]);
 
   const unpaidPurchases = allPurchaseRows.filter((r) => r.payStatus !== "paid");
@@ -6256,10 +6258,16 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
             <input type="date" value={creditDate} onChange={(e) => setCreditDate(e.target.value)}
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "3px 8px", fontSize: 13 }} />
           </div>
-          <button onClick={() => printAsPDF("credit-day-summary-print", `สรุปยอดใช้เงิน ${creditDate}`)}
-            style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            <Printer size={13} /> พิมพ์
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => setShowCreditSetting(true)}
+              style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+              <Settings size={13} /> ตั้งค่าวงเงิน
+            </button>
+            <button onClick={() => printAsPDF("credit-day-summary-print", `สรุปยอดใช้เงิน ${creditDate}`)}
+              style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+              <Printer size={13} /> พิมพ์
+            </button>
+          </div>
         </div>
         <div id="credit-day-summary-print">
           <div style={{ padding: "8px 14px", fontWeight: 700, fontSize: 14, borderBottom: "1px solid #e5e7eb" }}>
@@ -6290,7 +6298,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
               { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNet, color: "#e6f1fb" },
               { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBefore, color: "#fff" },
               { label: "ยอดตกหล่น", value: null, color: "#e6f1fb", input: true },
-              { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true },
+              { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true, rawTotal: creditDaySummary.rawTotal },
             ].map((row, i) => (
               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
                 <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
@@ -6298,9 +6306,14 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
                   <input type="number" value={creditManual} onChange={(e) => setCreditManual(e.target.value)}
                     style={{ width: 100, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "2px 8px", fontSize: 13 }} />
                 ) : (
-                  <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
-                    {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
-                  </span>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
+                      {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
+                    </span>
+                    {row.rawTotal != null && row.rawTotal !== row.value && (
+                      <div style={{ fontSize: 10, color: "#9ca3af" }}>ก่อนปัด: {fmt(row.rawTotal)}</div>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
@@ -9584,11 +9597,28 @@ function AssetsTab({ assets, setAssets }) {
 // COMPANY SETTINGS TAB (ตั้งค่าร้าน / โลโก้)
 // ===================================================================
 function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile }) {
-  const cs = settings || {};
-  const sp = shopProfile || {};
-  const set = (field, value) => setSettings((prev) => ({ ...prev, [field]: value }));
-  const setSP = (field, value) => setShopProfile((prev) => ({ ...prev, [field]: value }));
+  // ใช้ local draft state เพื่อป้องกัน Supabase sync overwrite ขณะพิมพ์
+  const [draft, setDraft] = useState(() => ({ ...(settings || {}) }));
+  const [draftSP, setDraftSP] = useState(() => ({ ...(shopProfile || {}) }));
   const [saved, setSaved] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+
+  // sync draft เมื่อ settings โหลดจาก Supabase ครั้งแรก (ถ้า draft ยังว่างหรือยังไม่แก้ไข)
+  const didInitRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!didInitRef.current && settings && Object.keys(settings).length > 0) {
+      setDraft({ ...settings });
+      didInitRef.current = true;
+    }
+  }, [settings]);
+  React.useEffect(() => {
+    if (!didInitRef.current && shopProfile && Object.keys(shopProfile).length > 0) {
+      setDraftSP({ ...shopProfile });
+    }
+  }, [shopProfile]);
+
+  const set = (field, value) => { setDraft(prev => ({ ...prev, [field]: value })); setIsDirty(true); };
+  const setSP = (field, value) => { setDraftSP(prev => ({ ...prev, [field]: value })); setIsDirty(true); };
 
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
@@ -9609,17 +9639,24 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
   };
 
   const handleSave = () => {
+    setSettings(draft);
+    setShopProfile(draftSP);
+    setIsDirty(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
+
+  // ใช้ draft แทน cs/sp เดิม
+  const cs = draft;
+  const sp = draftSP;
 
   const sCard = { background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "20px 24px", marginBottom: 16 };
 
   return (
     <div>
       <Header title="ตั้งค่ากิจการ" subtitle="แยกเป็น 2 ส่วน — โปรไฟล์หน้าแอป (sidebar) และข้อมูลเอกสาร/บิล">
-        <button style={btnPrimary} onClick={handleSave}>
-          {saved ? <><CheckCircle2 size={16} /> บันทึกแล้ว!</> : <><Save size={16} /> บันทึก</>}
+        <button style={{ ...btnPrimary, background: isDirty ? "#b45309" : undefined }} onClick={handleSave}>
+          {saved ? <><CheckCircle2 size={16} /> บันทึกแล้ว!</> : isDirty ? <><Save size={16} /> บันทึก (มีการแก้ไข)</> : <><Save size={16} /> บันทึก</>}
         </button>
       </Header>
 
