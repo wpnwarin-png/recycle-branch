@@ -2601,8 +2601,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   </tfoot>
                 )}
               </table>
-            </div>
-          </div>
+              </div>{/* end dash-box-purchase-by-product */}
+            </div>{/* end by-product card */}
+          </div>{/* end flex-column gap-16 */}
 
           {/* สรุปบิลแยกตามช่องทางชำระ */}
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
@@ -2673,8 +2674,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               ));
             })()}
             </div>{/* end dash-box-purchase-by-payment */}
-          </div>
-          </div>
+          </div>{/* end by-payment card */}
+          </div>{/* end dash-export-purchases */}
         </>
       )}
 
