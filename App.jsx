@@ -2051,7 +2051,7 @@ export default function App() {
         {tab === "purchases" && <PurchasesTab products={products} customers={customers} purchases={purchases} setPurchases={setPurchases} storeBankAccounts={storeBankAccounts} deposits={deposits} companySettings={companySettings} />}
         {tab === "withdrawals" && <WithdrawalsTab products={products} purchases={purchases} sales={sales} setSales={setSales} withdrawals={withdrawals} setWithdrawals={setWithdrawals} inventory={inventory} customers={customers} companySettings={companySettings} />}
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
-        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} />}
+        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} />}
         {tab === "delivery" && <DeliveryTab deliveries={deliveries} setDeliveries={setDeliveries} products={products} customers={customers} sales={sales} companySettings={companySettings} />}
         {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} />}
         {tab === "deposits" && <DepositsTab customers={customers} setCustomers={setCustomers} deposits={deposits} setDeposits={setDeposits} purchases={purchases} storeBankAccounts={storeBankAccounts} />}
@@ -3913,6 +3913,20 @@ function CustomersTab({ customers, setCustomers }) {
             <Field label="สถิติจำนวนการส่ง (ครั้ง)">
               <input type="number" style={inputStyle} value={form.deliveries} onChange={(e) => setForm({ ...form, deliveries: e.target.value })} />
             </Field>
+          </div>
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "12px 16px", marginTop: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#14532d", marginBottom: 10 }}>ยอดยกมา (ค้างจ่าย/ค้างรับจากก่อนเริ่มใช้ระบบ)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <Field label="ลูกหนี้ยกมา — ค้างรับจากลูกค้ารายนี้ (บาท)">
+                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.receivableOpening || ""} placeholder="0"
+                  onChange={(e) => setForm({ ...form, receivableOpening: e.target.value })} />
+              </Field>
+              <Field label="เจ้าหนี้ยกมา — ค้างจ่ายให้ลูกค้ารายนี้ (บาท)">
+                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.payableOpening || ""} placeholder="0"
+                  onChange={(e) => setForm({ ...form, payableOpening: e.target.value })} />
+              </Field>
+            </div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>* ยอดนี้จะแสดงในหน้ารับชำระ/จ่ายชำระเพื่อให้ตัดชำระได้ — เมื่อชำระครบแล้วยอดจะหายไปเอง</div>
           </div>
           <Field label="ที่อยู่">
             <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
@@ -5925,7 +5939,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 // ===================================================================
 // PAYMENTS TAB (รับชำระ/จ่ายชำระ — รวมรายการค้างชำระจากใบรับสินค้าและใบขาย)
 // ===================================================================
-function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers }) {
+function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [creditManual, setCreditManual] = React.useState(0); // ยอดตกหล่น กรอกมือ
@@ -5967,7 +5981,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
 
   // ---------- รายการใบรับสินค้าทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allPurchaseRows = useMemo(() => {
-    return purchases
+    const rows = purchases
       .filter((po) => (po.status || "") !== "ยกเลิก")
       .map((po) => {
         const subtotal = po.items.reduce((s, it) => {
@@ -5984,11 +5998,22 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
         const payStatus = po.writeOff ? "paid" : (remaining > 0.01 ? (paid > 0.01 ? "partial" : "unpaid") : "paid");
         return { kind: "purchase", id: po.id, date: po.date, customerId: po.customerId, total, paid, remaining, payStatus, doc: po };
       });
-  }, [purchases]);
+    // เพิ่ม virtual row สำหรับเจ้าหนี้ยกมา (ค้างจ่ายให้ลูกค้า ก่อนเริ่มใช้ระบบ)
+    customers.forEach(c => {
+      const amt = Number(c.payableOpening) || 0;
+      if (amt <= 0) return;
+      const vid = `OPENING-PAY-${c.id}`;
+      const paid = (c.payableOpeningPaid || 0);
+      const remaining = amt - paid;
+      if (remaining <= 0.01) return;
+      rows.push({ kind: "purchase", id: vid, date: c.payableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining, payStatus: paid > 0.01 ? "partial" : "unpaid", isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.payableOpeningPayments || [], vatRate: 0, status: "อนุมัติแล้ว", _openingLabel: `เจ้าหนี้ยกมา · ${c.name}` } });
+    });
+    return rows;
+  }, [purchases, customers]);
 
   // ---------- รายการใบขายทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allSaleRows = useMemo(() => {
-    return sales
+    const rows = sales
       .map((inv) => {
         const subtotal = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
         const ad = subtotal - (inv.discount || 0);
@@ -5999,7 +6024,18 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
         const payStatus = inv.writeOff ? "paid" : (remaining > 0.01 ? (paid > 0.01 ? "partial" : "unpaid") : "paid");
         return { kind: "sale", id: inv.id, date: inv.date, customerId: inv.customerId, total, paid, remaining, payStatus, doc: inv };
       });
-  }, [sales]);
+    // เพิ่ม virtual row สำหรับลูกหนี้ยกมา (ค้างรับจากลูกค้า ก่อนเริ่มใช้ระบบ)
+    customers.forEach(c => {
+      const amt = Number(c.receivableOpening) || 0;
+      if (amt <= 0) return;
+      const vid = `OPENING-REC-${c.id}`;
+      const paid = (c.receivableOpeningPaid || 0);
+      const remaining = amt - paid;
+      if (remaining <= 0.01) return;
+      rows.push({ kind: "sale", id: vid, date: c.receivableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining, payStatus: paid > 0.01 ? "partial" : "unpaid", isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.receivableOpeningPayments || [], vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
+    });
+    return rows;
+  }, [sales, customers]);
 
   // ---------- รายการค่าใช้จ่ายทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allExpenseRows = useMemo(() => {
@@ -6062,7 +6098,9 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
     const manual = Number(creditManual) || 0;
     const rawTotal = dayNet + pendingBefore + manual;
     const total = Math.floor(rawTotal); // ปัดลงเป็นจำนวนเต็มบาท
-    return { dayCost, dayExp, dayRev, dayNet, pendingBefore, manual, total, rawTotal };
+    const dayNetFloor = Math.floor(dayNet);
+    const pendingBeforeFloor = Math.floor(pendingBefore);
+    return { dayCost, dayExp, dayRev, dayNet, dayNetFloor, pendingBefore, pendingBeforeFloor, manual, total, rawTotal };
   }, [creditDate, allPurchaseRows, allExpenseRows, allSaleRows, payFlags, creditManual, creditAccounts]);
 
   const unpaidPurchases = allPurchaseRows.filter((r) => r.payStatus !== "paid");
@@ -6139,7 +6177,26 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
     if (cleaned.length === 0) return;
     const realId = payModal.doc?.id ?? payModal.id;
     const ts = new Date().toISOString();
-    if (payModal.kind === "purchase") {
+
+    // กรณี opening virtual row — บันทึกการชำระไว้ใน customer record แทน
+    if (payModal.isOpening) {
+      const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
+      if (payModal.kind === "purchase") {
+        // เจ้าหนี้ยกมา
+        setCustomers(customers.map(c => c.id === payModal.customerId ? {
+          ...c,
+          payableOpeningPaid: (Number(c.payableOpeningPaid) || 0) + addedPaid,
+          payableOpeningPayments: [...(c.payableOpeningPayments || []), ...cleaned],
+        } : c));
+      } else {
+        // ลูกหนี้ยกมา
+        setCustomers(customers.map(c => c.id === payModal.customerId ? {
+          ...c,
+          receivableOpeningPaid: (Number(c.receivableOpeningPaid) || 0) + addedPaid,
+          receivableOpeningPayments: [...(c.receivableOpeningPayments || []), ...cleaned],
+        } : c));
+      }
+    } else if (payModal.kind === "purchase") {
       setPurchases(purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po));
     } else if (payModal.kind === "expense") {
       setExpenses(expenses.map((e) => e.id === realId ? { ...e, payments: [...(e.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : e));
@@ -6296,8 +6353,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
           <div style={{ borderLeft: "1px solid #e5e7eb" }}>
             <div style={{ background: "#1a3a5c", color: "#fff", padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>ยอดใช้ที่ต้องเบิกคืน</div>
             {[
-              { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNet, color: "#e6f1fb" },
-              { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBefore, color: "#fff" },
+              { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNetFloor, color: "#e6f1fb" },
+              { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBeforeFloor, color: "#fff" },
               { label: "ยอดตกหล่น", value: null, color: "#e6f1fb", input: true },
               { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true, rawTotal: creditDaySummary.rawTotal },
             ].map((row, i) => (
@@ -6420,9 +6477,13 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
           </thead>
           <tbody>
             {pagedCombined.map((r) => (
-              <tr key={r.kind + r.id}>
+              <tr key={r.kind + r.id} style={r.isOpening ? { background: "#fffbeb" } : undefined}>
                 <td style={tdStyle}>
-                  {r.kind === "purchase" ? (
+                  {r.isOpening ? (
+                    r.kind === "purchase"
+                      ? <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>⚑ เจ้าหนี้ยกมา</span>
+                      : <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>⚑ ลูกหนี้ยกมา</span>
+                  ) : r.kind === "purchase" ? (
                     <span style={{ background: "#E8F5EC", color: "#1A6B35", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ใบรับสินค้า)</span>
                   ) : r.kind === "expense" ? (
                     <span style={{ background: "#E8F5EC", color: "#1A5C2A", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ค่าใช้จ่าย)</span>
@@ -6430,8 +6491,10 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, stor
                     <span style={{ background: "#e6f1fb", color: "#185fa5", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>รับ (ใบขาย)</span>
                   )}
                 </td>
-                <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: "#534ab7" }}>{r.id}</td>
-                <td style={tdStyle}>{r.date}</td>
+                <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: r.isOpening ? "#92400e" : "#534ab7", fontSize: r.isOpening ? 11 : undefined }}>
+                  {r.isOpening ? "ยอดยกมา" : r.id}
+                </td>
+                <td style={tdStyle}>{r.isOpening ? "—" : r.date}</td>
                 <td style={tdStyle}>{r.kind === "expense" ? r.vendorLabel : custName(r.customerId)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(r.total)}</td>
                 <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(r.paid)}</td>
