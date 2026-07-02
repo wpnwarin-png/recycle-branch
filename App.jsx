@@ -906,8 +906,8 @@ const roundBtn = {
   cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#1A5C2A", lineHeight: 1, flexShrink: 0, minWidth: 38,
 };
 
-const thStyle = { textAlign: "left", padding: "10px 12px", fontSize: 12, fontWeight: 600, color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" };
-const tdStyle = { padding: "10px 12px", fontSize: 14, borderBottom: "1px solid #f3f4f6", whiteSpace: "nowrap" };
+const thStyle = { textAlign: "left", padding: "6px 12px", fontSize: 14, fontWeight: 600, color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" };
+const tdStyle = { padding: "6px 12px", fontSize: 16, borderBottom: "1px solid #f3f4f6", whiteSpace: "nowrap" };
 
 function genId(prefix, list, dateStr) {
   const now = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
@@ -2301,12 +2301,13 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const renderCard = (c, snapshot) => {
     const Icon = c.icon;
     return (
-      <div key={c.label} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
-        <div style={{ width: 38, height: 38, borderRadius: 8, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-          <Icon size={20} color={c.color} />
+      <div key={c.label} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${theme.border}`, padding: "20px 22px" }}>
+        <div style={{ width: 42, height: 42, borderRadius: 10, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+          <Icon size={22} color={c.color} />
         </div>
-        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label} {snapshot && <span style={{ color: "#bcb6e0" }}>(ปัจจุบัน)</span>}</div>
-        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827", lineHeight: 1.1 }}>{c.value} <span style={{ fontSize: 14, fontWeight: 400, color: "#9ca3af" }}>{c.suffix}</span></div>
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, lineHeight: 1.4 }}>{c.label} {snapshot && <span style={{ color: "#bcb6e0" }}>(ปัจจุบัน)</span>}</div>
+        <div style={{ fontSize: 36, fontWeight: 900, color: "#111827", lineHeight: 1, letterSpacing: "-0.5px" }}>{c.value}</div>
+        <div style={{ fontSize: 13, color: "#9ca3af", marginTop: 4 }}>{c.suffix}</div>
       </div>
     );
   };
