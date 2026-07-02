@@ -2314,7 +2314,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
   // helper สร้าง header สีของกล่อง
   const BoxHeader = ({ title, shareId, shareTitle }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.header, borderRadius: "10px 10px 0 0", padding: "9px 16px", margin: "-18px -20px 14px" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.header, borderRadius: "10px 10px 0 0", padding: "10px 16px", marginBottom: 14 }}>
       <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.headerText }}>{title}</h3>
       {shareId && <LineShareButton elementId={shareId} title={shareTitle || title} small />}
     </div>
@@ -2492,9 +2492,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             {renderCard(purchaseCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
   <BoxHeader title="ยอดซื้อ แบ่งตามประเภทสินค้า" shareId="dash-box-purchase-by-type" shareTitle="ยอดซื้อแบ่งตามประเภทสินค้า" />
-  <div id="dash-box-purchase-by-type">
+  <div id="dash-box-purchase-by-type" style={{ padding: "0 16px 16px" }}>
   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
                   <col style={{ width: "50%" }} />
@@ -2535,9 +2535,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   </div>{/* end dash-box-purchase-by-type */}
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
               <BoxHeader title="ยอดซื้อ แบ่งตามรายการสินค้า" shareId="dash-box-purchase-by-product" shareTitle="ยอดซื้อแบ่งตามรายการสินค้า" />
-              <div id="dash-box-purchase-by-product">
+              <div id="dash-box-purchase-by-product" style={{ padding: "0 16px 16px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
                   <col style={{ width: "50%" }} />
@@ -2580,9 +2580,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           </div>{/* end flex-column gap-16 */}
 
           {/* สรุปบิลแยกตามช่องทางชำระ */}
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", marginTop: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, marginTop: 16 }}>
             <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-purchase-by-payment" shareTitle="สรุปบิลซื้อแยกตามช่องทางชำระ" />
-            <div id="dash-box-purchase-by-payment">
+            <div id="dash-box-purchase-by-payment" style={{ padding: "0 16px 16px" }}>
             {(() => {
               // จัดกลุ่ม purchases ในช่วง
               const pos = filteredPurchases;
@@ -2662,9 +2662,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             {renderCard(salesCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
               <BoxHeader title="ยอดขาย แบ่งตามประเภทสินค้า" shareId="dash-box-sale-by-type" shareTitle="ยอดขายแบ่งตามประเภทสินค้า" />
-              <div id="dash-box-sale-by-type">
+              <div id="dash-box-sale-by-type" style={{ padding: "0 16px 16px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
                   <tr>
@@ -2699,9 +2699,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
               <BoxHeader title="ยอดขาย แบ่งตามรายการสินค้า" shareId="dash-box-sale-by-product" shareTitle="ยอดขายแบ่งตามรายการสินค้า" />
-              <div id="dash-box-sale-by-product">
+              <div id="dash-box-sale-by-product" style={{ padding: "0 16px 16px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500  }}>
                 <thead>
                   <tr>
@@ -2751,9 +2751,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
               {renderCard(expensesCard)}
             </div>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
               <BoxHeader title="ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย" shareId="dash-box-expense-by-subcat" shareTitle="ค่าใช้จ่ายแบ่งตามหมวดหมู่ย่อย" />
-              <div id="dash-box-expense-by-subcat">
+              <div id="dash-box-expense-by-subcat" style={{ padding: "0 16px 16px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
                   <tr>
@@ -2791,9 +2791,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             </div>
 
             {/* สรุปค่าใช้จ่ายแยกตามช่องทางชำระ */}
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", marginTop: 16 }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, marginTop: 16 }}>
               <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-expense-by-payment" shareTitle="สรุปบิลค่าใช้จ่ายแยกตามช่องทางชำระ" />
-              <div id="dash-box-expense-by-payment">
+              <div id="dash-box-expense-by-payment" style={{ padding: "0 16px 16px" }}>
               {(() => {
                 const exps = (expenses || []).filter(e => inRange(e.billDate || e.date));
                 const entries = [];
@@ -2874,19 +2874,19 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             const anySelected = visibleTypes.some(t => selectedStockTypes[t]);
             const selectedIds = visibleTypes.filter(t => selectedStockTypes[t]).map(t => `dash-stock-type-${t.replace(/\s/g, "-")}`);
             return (
-              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#14532d" }}>
+              <div style={{ background: "#f5f3ff", border: `1px solid ${theme.border}`, borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#4c1d95" }}>
                   <input type="checkbox" checked={allSelected} onChange={e => {
                     const next = {};
                     visibleTypes.forEach(t => { next[t] = e.target.checked; });
                     setSelectedStockTypes(next);
-                  }} style={{ width: 15, height: 15, accentColor: "#06C755" }} />
+                  }} style={{ width: 15, height: 15, accentColor: "#5b21b6" }} />
                   เลือกทั้งหมด
                 </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
                   {visibleTypes.map(t => (
-                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#166534", background: selectedStockTypes[t] ? "#dcfce7" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#86efac" : "#d1fae5"}`, borderRadius: 6, padding: "3px 9px" }}>
-                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#06C755" }} />
+                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#5b21b6", background: selectedStockTypes[t] ? "#ddd6fe" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#a78bfa" : "#ddd6fe"}`, borderRadius: 6, padding: "3px 9px" }}>
+                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#5b21b6" }} />
                       {t}
                     </label>
                   ))}
@@ -3242,8 +3242,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
 
               {/* ตารางรายละเอียดธนาคาร */}
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto", marginBottom: 14 }}>
-                <div style={{ background: "#185fa5", color: "#fff", padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
+              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflowX: "auto", marginBottom: 14 }}>
+                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
                   ยอดเงินในธนาคารแต่ละบัญชี{dateRange ? ` — ${periodLabel}` : ""}
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
@@ -3358,8 +3358,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
 
               {/* ตารางสรุปรวม */}
-              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden" }}>
-                <div style={{ background: "#0D3D1A", color: "#fff", padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
+              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
+                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
                   สรุปเงินหมุนเวียนร้าน
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -6290,6 +6290,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
               <Settings size={13} /> ตั้งค่าวงเงิน
             </button>
+            <LineShareButton elementId="credit-day-summary-print" title={`สรุปยอดใช้เงิน ${creditDate}`} small />
             <button onClick={() => printAsPDF("credit-day-summary-print", `สรุปยอดใช้เงิน ${creditDate}`)}
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
               <Printer size={13} /> พิมพ์
