@@ -114,73 +114,71 @@ function exportImage(elementId, filename = "export.png") {
 }
 
 // ---------- LINE Share Utilities ----------
-// แปลง DOM element เป็นรูปภาพแล้วแชร์ LINE (มือถือ) หรือดาวน์โหลด (คอม)
-async function shareElementToLine(elementId, title = "แชร์") {
-  const el = document.getElementById(elementId);
-  if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
-
-  // โหลด html2canvas จาก CDN
-  if (!window.html2canvas) {
-    try {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-        s.onload = resolve; s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    } catch (e) {
-      const txt = (el.innerText || el.textContent || "").slice(0, 500);
-      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
-      return;
-    }
-  }
-
-  // ปิด overflow ชั่วคราวบน el และลูกหลานทั้งหมด เพื่อให้ html2canvas capture ครบ
-  const overrideMap = new Map();
-  const fixOverflow = (node) => {
-    if (node.nodeType !== 1) return;
-    const cs = window.getComputedStyle(node);
-    const ox = cs.overflowX, oy = cs.overflowY;
-    if (ox === "auto" || ox === "scroll" || oy === "auto" || oy === "scroll") {
-      overrideMap.set(node, { ox: node.style.overflowX, oy: node.style.overflowY });
-      node.style.overflowX = "visible";
-      node.style.overflowY = "visible";
-    }
-    Array.from(node.children).forEach(fixOverflow);
-  };
-  // เก็บขนาดจริงของ element ก่อน override
-  const origOverflow = { x: el.style.overflowX, y: el.style.overflowY };
-  el.style.overflowX = "visible";
-  el.style.overflowY = "visible";
-  Array.from(el.children).forEach(fixOverflow);
-
-  let canvas;
+// ฟังก์ชัน helper: โหลด html2canvas จาก CDN (ครั้งเดียว)
+async function loadHtml2Canvas() {
+  if (window.html2canvas) return true;
   try {
-    canvas = await window.html2canvas(el, {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    return true;
+  } catch { return false; }
+}
+
+// capture element เป็น canvas โดย clone ไปวางใน off-screen container เพื่อหลีกเลี่ยง viewport clip บนมือถือ
+async function captureElementToCanvas(el, captureWidth = 1200) {
+  const ok = await loadHtml2Canvas();
+  if (!ok) return null;
+
+  // clone และวางใน off-screen wrapper กว้าง captureWidth เพื่อให้ layout คำนวณใหม่เต็มความกว้าง
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText = `
+    position: fixed; left: -99999px; top: 0;
+    width: ${captureWidth}px; min-width: ${captureWidth}px;
+    background: #ffffff; z-index: -1;
+    font-family: 'Noto Sans Thai', sans-serif;
+    overflow: visible;
+  `;
+  const clone = el.cloneNode(true);
+  clone.style.cssText += "; width: 100%; overflow: visible; max-width: none;";
+  // ปิด overflow ทุก node ใน clone
+  const walkOverflow = (node) => {
+    if (node.nodeType !== 1) return;
+    node.style.overflowX = "visible";
+    node.style.overflowY = "visible";
+    Array.from(node.children).forEach(walkOverflow);
+  };
+  walkOverflow(clone);
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+
+  // รอ 1 frame เพื่อให้ browser layout เสร็จ
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  let canvas = null;
+  try {
+    canvas = await window.html2canvas(clone, {
       scale: 2,
       useCORS: true,
       backgroundColor: "#ffffff",
       scrollX: 0,
       scrollY: 0,
-      width: el.scrollWidth,
-      height: el.scrollHeight,
-      windowWidth: el.scrollWidth,
+      width: clone.scrollWidth,
+      height: clone.scrollHeight,
+      windowWidth: captureWidth,
     });
-  } catch (e) {
-    const txt = (el.innerText || el.textContent || "").slice(0, 500);
-    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
   } finally {
-    // คืนค่า overflow เดิม
-    el.style.overflowX = origOverflow.x;
-    el.style.overflowY = origOverflow.y;
-    overrideMap.forEach(({ ox, oy }, node) => {
-      node.style.overflowX = ox;
-      node.style.overflowY = oy;
-    });
+    document.body.removeChild(wrapper);
   }
+  return canvas;
+}
 
+// แชร์รูป canvas → LINE (มือถือ) หรือดาวน์โหลด (คอม)
+async function shareCanvas(canvas, title) {
   if (!canvas) return;
-
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   if (isMobile && navigator.share) {
     canvas.toBlob(async (blob) => {
@@ -199,6 +197,23 @@ async function shareElementToLine(elementId, title = "แชร์") {
     a.href = canvas.toDataURL("image/png");
     a.download = `${title}.png`;
     a.click();
+  }
+}
+
+// แปลง DOM element เป็นรูปภาพแล้วแชร์ LINE (มือถือ) หรือดาวน์โหลด (คอม)
+async function shareElementToLine(elementId, title = "แชร์") {
+  const el = document.getElementById(elementId);
+  if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
+  try {
+    const canvas = await captureElementToCanvas(el);
+    if (canvas) { await shareCanvas(canvas, title); }
+    else {
+      const txt = (el.innerText || el.textContent || "").slice(0, 500);
+      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
+    }
+  } catch (e) {
+    const txt = (el.innerText || el.textContent || "").slice(0, 500);
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
   }
 }
 
@@ -235,58 +250,15 @@ async function shareMultipleElementsToLine(elementIds, title = "แชร์") {
   const els = elementIds.map(id => document.getElementById(id)).filter(Boolean);
   if (els.length === 0) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
 
-  if (!window.html2canvas) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
+  const ok = await loadHtml2Canvas();
+  if (!ok) { alert("ไม่สามารถโหลด html2canvas ได้"); return; }
 
-  // helper: ปิด overflow ชั่วคราว คืนค่า map สำหรับ restore
-  const disableOverflow = (el) => {
-    const overrideMap = new Map();
-    const walk = (node) => {
-      if (node.nodeType !== 1) return;
-      const cs = window.getComputedStyle(node);
-      if (cs.overflowX === "auto" || cs.overflowX === "scroll" || cs.overflowY === "auto" || cs.overflowY === "scroll") {
-        overrideMap.set(node, { ox: node.style.overflowX, oy: node.style.overflowY });
-        node.style.overflowX = "visible";
-        node.style.overflowY = "visible";
-      }
-      Array.from(node.children).forEach(walk);
-    };
-    overrideMap.set(el, { ox: el.style.overflowX, oy: el.style.overflowY });
-    el.style.overflowX = "visible";
-    el.style.overflowY = "visible";
-    Array.from(el.children).forEach(walk);
-    return overrideMap;
-  };
-  const restoreOverflow = (overrideMap) => {
-    overrideMap.forEach(({ ox, oy }, node) => {
-      node.style.overflowX = ox;
-      node.style.overflowY = oy;
-    });
-  };
-
-  // render แต่ละ element แล้ว stack ลงใน canvas เดียว
-  const canvases = await Promise.all(els.map(async el => {
-    const map = disableOverflow(el);
-    try {
-      return await window.html2canvas(el, {
-        scale: 2, useCORS: true, backgroundColor: "#ffffff",
-        scrollX: 0, scrollY: 0,
-        width: el.scrollWidth, height: el.scrollHeight,
-        windowWidth: el.scrollWidth,
-      });
-    } finally {
-      restoreOverflow(map);
-    }
-  }));
+  // capture แต่ละ element ผ่าน off-screen clone แล้ว stack แนวตั้ง
+  const canvases = (await Promise.all(els.map(el => captureElementToCanvas(el)))).filter(Boolean);
+  if (canvases.length === 0) return;
 
   const totalWidth = Math.max(...canvases.map(c => c.width));
-  const totalHeight = canvases.reduce((s, c) => s + c.height + 16, 0);
+  const totalHeight = canvases.reduce((s, c) => s + c.height + 24, 0);
   const combined = document.createElement("canvas");
   combined.width = totalWidth;
   combined.height = totalHeight;
@@ -294,30 +266,9 @@ async function shareMultipleElementsToLine(elementIds, title = "แชร์") {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, totalWidth, totalHeight);
   let y = 0;
-  canvases.forEach(c => {
-    ctx.drawImage(c, 0, y);
-    y += c.height + 16;
-  });
+  canvases.forEach(c => { ctx.drawImage(c, 0, y); y += c.height + 24; });
 
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  if (isMobile && navigator.share) {
-    combined.toBlob(async (blob) => {
-      try {
-        const file = new File([blob], `${title}.png`, { type: "image/png" });
-        await navigator.share({ files: [file], title });
-      } catch {
-        const a = document.createElement("a");
-        a.href = combined.toDataURL("image/png");
-        a.download = `${title}.png`;
-        a.click();
-      }
-    }, "image/png");
-  } else {
-    const a = document.createElement("a");
-    a.href = combined.toDataURL("image/png");
-    a.download = `${title}.png`;
-    a.click();
-  }
+  await shareCanvas(combined, title);
 }
 
 // Print current page as PDF (via browser print dialog)
@@ -2193,6 +2144,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
   // ---------- สต๊อกคงเหลือ แบ่งตามประเภทสินค้า (สำหรับตัวกรองดรอปดาวน์) ----------
   const stockByType = useMemo(() => {
+    const STOCK_TYPE_ORDER_MEMO = ["ทองแดง","ทองเหลือง","แบต","สแตนเลส","อลูมิเนียม","ตะกั๋ว","กระดาษ","แก้ว","ลังเบียร์","พลาสติก","เหล็ก","สังกะสี","PVC"];
     const groups = {}; // type -> { type, qty, value, items: [...] }
     inventory.summary.forEach((s) => {
       const p = products.find((pr) => pr.id === s.productId);
@@ -2204,7 +2156,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     });
     return Object.values(groups)
       .map((g) => ({ ...g, avgCost: g.qty > 0 ? g.value / g.qty : 0 }))
-      .sort((a, b) => b.value - a.value);
+      .sort((a, b) => {
+        const ia = STOCK_TYPE_ORDER_MEMO.indexOf(a.type);
+        const ib = STOCK_TYPE_ORDER_MEMO.indexOf(b.type);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return a.type.localeCompare(b.type, "th");
+      });
   }, [inventory.summary, products]);
 
   // ---------- คงเหลือสินเชื่อ/เงินกู้ — ยอดเงินต้นคงเหลือรวมทุกสัญญา ณ ปัจจุบัน ----------
@@ -2309,14 +2268,26 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
-  const purchaseCard = { label: "มูลค่าซื้อ ก่อน VAT (อนุมัติแล้ว)", value: fmt(totalPurchaseValue), suffix: "บาท", icon: ArrowDownToLine, color: "#d85a30", bg: "#E8F5EC" };
-  const salesCard = { label: "มูลค่าขายสะสม", value: fmt(totalSalesValue), suffix: "บาท", icon: ArrowUpFromLine, color: "#185fa5", bg: "#e6f1fb" };
-  const expensesCard = { label: "ค่าใช้จ่ายรวม", value: fmt(totalExpenses), suffix: "บาท", icon: Receipt, color: "#1A6B35", bg: "#E8F5EC" };
-  const stockCard = {
-    label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)",
-    value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#2E8B45", bg: "#E8F5EC"
+  const purchaseCard = { label: "มูลค่าซื้อ ก่อน VAT (อนุมัติแล้ว)", value: fmt(totalPurchaseValue), suffix: "บาท", icon: ArrowDownToLine, color: "#1e40af", bg: "#dbeafe" };
+  const salesCard = { label: "มูลค่าขายสะสม", value: fmt(totalSalesValue), suffix: "บาท", icon: ArrowUpFromLine, color: "#166534", bg: "#dcfce7" };
+  const expensesCard = { label: "ค่าใช้จ่ายรวม", value: fmt(totalExpenses), suffix: "บาท", icon: Receipt, color: "#92400e", bg: "#fef3c7" };
+  const stockCard = { label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)", value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#6d28d9", bg: "#ede9fe" };
+  const loanCard = { label: "คงเหลือสินเชื่อ/เงินกู้", value: fmt(totalLoanRemaining), suffix: "บาท", icon: CreditCard, color: "#0e7490", bg: "#cffafe" };
+
+  // theme color ต่อแท็บ
+  const DASH_THEME = {
+    purchases: { header: "#1e40af", headerText: "#fff", cardBg: "#eff6ff", border: "#bfdbfe" },
+    sales:     { header: "#166534", headerText: "#fff", cardBg: "#f0fdf4", border: "#bbf7d0" },
+    expenses:  { header: "#92400e", headerText: "#fff", cardBg: "#fffbeb", border: "#fde68a" },
+    stock:     { header: "#5b21b6", headerText: "#fff", cardBg: "#f5f3ff", border: "#ddd6fe" },
+    loans:     { header: "#0e7490", headerText: "#fff", cardBg: "#ecfeff", border: "#a5f3fc" },
+    cashflow:  { header: "#1e3a5f", headerText: "#fff", cardBg: "#f0f4ff", border: "#c7d7f5" },
   };
-  const loanCard = { label: "คงเหลือสินเชื่อ/เงินกู้", value: fmt(totalLoanRemaining), suffix: "บาท", icon: CreditCard, color: "#1A6B35", bg: "#E8F5EC" };
+  const theme = DASH_THEME[dashSubTab] || DASH_THEME.cashflow;
+
+  // ลำดับประเภทสต็อกตามที่กำหนด
+  const STOCK_TYPE_ORDER = ["ทองแดง","ทองเหลือง","แบต","สแตนเลส","อลูมิเนียม","ตะกั๋ว","กระดาษ","แก้ว","ลังเบียร์","พลาสติก","เหล็ก","สังกะสี","PVC"];
+  const stockTypeOrder = (type) => { const i = STOCK_TYPE_ORDER.indexOf(type); return i >= 0 ? i : 999; };
 
   const subTabs = [
     { key: "purchases", label: "ซื้อ", icon: ArrowDownToLine },
@@ -2330,15 +2301,23 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const renderCard = (c, snapshot) => {
     const Icon = c.icon;
     return (
-      <div key={c.label} style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-          <Icon size={18} color={c.color} />
+      <div key={c.label} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
+        <div style={{ width: 38, height: 38, borderRadius: 8, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+          <Icon size={20} color={c.color} />
         </div>
         <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label} {snapshot && <span style={{ color: "#bcb6e0" }}>(ปัจจุบัน)</span>}</div>
-        <div style={{ fontSize: 22, fontWeight: 700 }}>{c.value} <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{c.suffix}</span></div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: "#111827", lineHeight: 1.1 }}>{c.value} <span style={{ fontSize: 14, fontWeight: 400, color: "#9ca3af" }}>{c.suffix}</span></div>
       </div>
     );
   };
+
+  // helper สร้าง header สีของกล่อง
+  const BoxHeader = ({ title, shareId, shareTitle }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.header, borderRadius: "10px 10px 0 0", padding: "9px 16px", margin: "-18px -20px 14px" }}>
+      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.headerText }}>{title}</h3>
+      {shareId && <LineShareButton elementId={shareId} title={shareTitle || title} small />}
+    </div>
+  );
 
   // ---------- Export handlers (per sub-tab) ----------
   const periodLabel = dateRange ? `${dateRange.start} ถึง ${dateRange.end}` : "ทั้งหมด";
@@ -2512,11 +2491,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             {renderCard(purchaseCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามประเภทสินค้า</h3>
-  <LineShareButton elementId="dash-box-purchase-by-type" title="ยอดซื้อแบ่งตามประเภทสินค้า" small />
-  </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+  <BoxHeader title="ยอดซื้อ แบ่งตามประเภทสินค้า" shareId="dash-box-purchase-by-type" shareTitle="ยอดซื้อแบ่งตามประเภทสินค้า" />
   <div id="dash-box-purchase-by-type">
   <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
@@ -2558,11 +2534,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   </div>{/* end dash-box-purchase-by-type */}
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามรายการสินค้า</h3>
-              <LineShareButton elementId="dash-box-purchase-by-product" title="ยอดซื้อแบ่งตามรายการสินค้า" small />
-              </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+              <BoxHeader title="ยอดซื้อ แบ่งตามรายการสินค้า" shareId="dash-box-purchase-by-product" shareTitle="ยอดซื้อแบ่งตามรายการสินค้า" />
               <div id="dash-box-purchase-by-product">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <colgroup>
@@ -2606,11 +2579,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           </div>{/* end flex-column gap-16 */}
 
           {/* สรุปบิลแยกตามช่องทางชำระ */}
-          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
-              <LineShareButton elementId="dash-box-purchase-by-payment" title="สรุปบิลซื้อแยกตามช่องทางชำระ" small />
-            </div>
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", marginTop: 16 }}>
+            <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-purchase-by-payment" shareTitle="สรุปบิลซื้อแยกตามช่องทางชำระ" />
             <div id="dash-box-purchase-by-payment">
             {(() => {
               // จัดกลุ่ม purchases ในช่วง
@@ -2691,11 +2661,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             {renderCard(salesCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามประเภทสินค้า</h3>
-                <LineShareButton elementId="dash-box-sale-by-type" title="ยอดขายแบ่งตามประเภทสินค้า" small />
-              </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+              <BoxHeader title="ยอดขาย แบ่งตามประเภทสินค้า" shareId="dash-box-sale-by-type" shareTitle="ยอดขายแบ่งตามประเภทสินค้า" />
               <div id="dash-box-sale-by-type">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
@@ -2731,11 +2698,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามรายการสินค้า</h3>
-                <LineShareButton elementId="dash-box-sale-by-product" title="ยอดขายแบ่งตามรายการสินค้า" small />
-              </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+              <BoxHeader title="ยอดขาย แบ่งตามรายการสินค้า" shareId="dash-box-sale-by-product" shareTitle="ยอดขายแบ่งตามรายการสินค้า" />
               <div id="dash-box-sale-by-product">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500  }}>
                 <thead>
@@ -2786,11 +2750,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
               {renderCard(expensesCard)}
             </div>
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", overflowX: "auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย</h3>
-                <LineShareButton elementId="dash-box-expense-by-subcat" title="ค่าใช้จ่ายแบ่งตามหมวดหมู่ย่อย" small />
-              </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", overflowX: "auto" }}>
+              <BoxHeader title="ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย" shareId="dash-box-expense-by-subcat" shareTitle="ค่าใช้จ่ายแบ่งตามหมวดหมู่ย่อย" />
               <div id="dash-box-expense-by-subcat">
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
                 <thead>
@@ -2829,11 +2790,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             </div>
 
             {/* สรุปค่าใช้จ่ายแยกตามช่องทางชำระ */}
-            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
-                <LineShareButton elementId="dash-box-expense-by-payment" title="สรุปบิลค่าใช้จ่ายแยกตามช่องทางชำระ" small />
-              </div>
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: "18px 20px", marginTop: 16 }}>
+              <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-expense-by-payment" shareTitle="สรุปบิลค่าใช้จ่ายแยกตามช่องทางชำระ" />
               <div id="dash-box-expense-by-payment">
               {(() => {
                 const exps = (expenses || []).filter(e => inRange(e.billDate || e.date));
@@ -2952,7 +2910,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             );
           })()}
 
-          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto" }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflowX: "auto" }}>
             {/* hidden divs สำหรับ capture รูปแชร์ LINE — วางนอก table เพื่อไม่ถูกตัดความกว้าง */}
             <div style={{ position: "absolute", left: -9999, top: 0, width: 480 }}>
               {stockByType.map((g) => {
@@ -2961,7 +2919,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                 const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
                 return (
                   <div key={g.type} id={typeId} style={{ background: "#fff", padding: 16, width: 480, fontFamily: "inherit" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#083319", background: "#e6f9f0", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#5b21b6", background: "#f5f3ff", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
                         <th style={{ ...thStyle, fontSize: 12 }}>สินค้า</th>
@@ -2973,14 +2931,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                         <tr key={s.productId}>
                           <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#1A6B35" }}>{fmt(s.totalCost)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#5b21b6" }}>{fmt(s.totalCost)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
                         </tr>
                       ))}</tbody>
-                      <tfoot><tr style={{ background: "#1f2937" }}>
+                      <tfoot><tr style={{ background: "#5b21b6" }}>
                         <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5", fontSize: 12 }}>{fmt(g.value)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe", fontSize: 12 }}>{fmt(g.value)}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
                       </tr></tfoot>
                     </table>
@@ -2988,9 +2946,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                 );
               })}
             </div>
-            <div style={{ background: "#083319", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ background: theme.header, color: theme.headerText, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
               <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>มูลค่าสต๊อกรวม</h3>
-              <span style={{ fontSize: 12, color: "#e7c9c9" }}>วันที่ {today}</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}>วันที่ {today}</span>
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
               <thead>
@@ -3013,10 +2971,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                           <tr
                             onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
                             style={{ cursor: "pointer" }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = "#f3f4f6"; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "#f5f3ff"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
                           >
-                            <td style={{ ...tdStyle, fontWeight: 700, color: "#1A6B35" }}>{g.type}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: "#5b21b6" }}>{g.type}</td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
@@ -3025,14 +2983,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                             <tr key={s.productId}>
                               <td style={{ ...tdStyle, color: "#111827", paddingLeft: 24 }}>- {s.name}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.qty)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35" }}>{fmt(s.totalCost)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", color: "#5b21b6" }}>{fmt(s.totalCost)}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.avgCost)}</td>
                             </tr>
                           ))}
-                          <tr style={{ background: "#1f2937" }}>
+                          <tr style={{ background: "#5b21b6" }}>
                             <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5" }}>{fmt(g.value)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe" }}>{fmt(g.value)}</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                           </tr>
                         </>
@@ -3040,13 +2998,13 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                       {!isExpanded && (
                         <tr
                           onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
-                          style={{ cursor: "pointer", background: "#1f2937" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "#374151"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "#1f2937"; }}
+                          style={{ cursor: "pointer", background: "#5b21b6" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "#6d28d9"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "#5b21b6"; }}
                         >
                           <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5" }}>{fmt(g.value)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe" }}>{fmt(g.value)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                         </tr>
                       )}
@@ -3059,11 +3017,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </tbody>
               {stockByType.length > 0 && (
                 <tfoot>
-                  <tr style={{ borderTop: "3px solid #1A5C2A" }}>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#1A5C2A", fontSize: 14 }}>ผลรวม</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A", fontSize: 14 }}>
+                  <tr style={{ borderTop: `3px solid ${theme.header}` }}>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>ผลรวม</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>
                       {(() => {
                         const totalQty = stockByType.reduce((s, g) => s + g.qty, 0);
                         const totalVal = stockByType.reduce((s, g) => s + g.value, 0);
@@ -5942,7 +5900,14 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
-  const [creditManual, setCreditManual] = React.useState(0); // ยอดตกหล่น กรอกมือ
+  const [creditManual, setCreditManualState] = React.useState(() => {
+    try { return Number(localStorage.getItem("creditManual") || "0"); } catch { return 0; }
+  });
+  const setCreditManual = (val) => {
+    const n = Number(val) || 0;
+    setCreditManualState(n);
+    try { localStorage.setItem("creditManual", String(n)); } catch {}
+  };
   const [returnBankName, setReturnBankName] = React.useState(""); // ธนาคารโอนคืน
   const [returnBankNo, setReturnBankNo] = React.useState("");   // เลขที่บัญชีโอนคืน
   const [returnBankOwner, setReturnBankOwner] = React.useState(""); // ชื่อบัญชีโอนคืน
