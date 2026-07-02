@@ -5909,9 +5909,12 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     setCreditManualState(n);
     try { localStorage.setItem("creditManual", String(n)); } catch {}
   };
-  const [returnBankName, setReturnBankName] = React.useState(""); // ธนาคารโอนคืน
-  const [returnBankNo, setReturnBankNo] = React.useState("");   // เลขที่บัญชีโอนคืน
-  const [returnBankOwner, setReturnBankOwner] = React.useState(""); // ชื่อบัญชีโอนคืน
+  const [returnBankName, setReturnBankNameState] = React.useState(() => { try { return localStorage.getItem("returnBankName") || ""; } catch { return ""; } });
+  const [returnBankNo, setReturnBankNoState] = React.useState(() => { try { return localStorage.getItem("returnBankNo") || ""; } catch { return ""; } });
+  const [returnBankOwner, setReturnBankOwnerState] = React.useState(() => { try { return localStorage.getItem("returnBankOwner") || ""; } catch { return ""; } });
+  const setReturnBankName = (v) => { setReturnBankNameState(v); try { localStorage.setItem("returnBankName", v); } catch {} };
+  const setReturnBankNo = (v) => { setReturnBankNoState(v); try { localStorage.setItem("returnBankNo", v); } catch {} };
+  const setReturnBankOwner = (v) => { setReturnBankOwnerState(v); try { localStorage.setItem("returnBankOwner", v); } catch {} };
   const creditLimit = Number(companySettings?.creditLimit) || 0;
   const creditAccounts = companySettings?.creditAccounts || []; // array of storeBankAccount ids ที่นับในวงเงิน
 
