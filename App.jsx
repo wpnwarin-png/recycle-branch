@@ -6344,14 +6344,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
                 <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
                 {row.input ? (
-                  <div style={{ position: "relative" }}>
-                    <input type="number" value={creditManual} onChange={(e) => setCreditManual(e.target.value)}
-                      style={{ width: 100, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "2px 8px", fontSize: 13 }} />
-                    {/* overlay สำหรับ html2canvas — ซ่อนจาก user แต่ capture ได้ */}
-                    <div aria-hidden="true" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 8, fontSize: 13, fontWeight: 600, color: Number(creditManual) < 0 ? "#1A5C2A" : "#374151", pointerEvents: "none", background: "transparent" }}>
-                      {fmt(Number(creditManual) || 0)}
-                    </div>
-                  </div>
+                  <input type="number" value={creditManual} onChange={(e) => setCreditManual(e.target.value)}
+                    style={{ width: 100, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "2px 8px", fontSize: 13 }} />
                 ) : (
                   <div style={{ textAlign: "right" }}>
                     <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
