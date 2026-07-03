@@ -2429,7 +2429,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const purchaseCard = { label: "มูลค่าซื้อ ก่อน VAT (อนุมัติแล้ว)", value: fmt(totalPurchaseValue), suffix: "บาท", icon: ArrowDownToLine, color: "#1e40af", bg: "#dbeafe" };
   const salesCard = { label: "มูลค่าขายสะสม", value: fmt(totalSalesValue), suffix: "บาท", icon: ArrowUpFromLine, color: "#166534", bg: "#dcfce7" };
   const expensesCard = { label: "ค่าใช้จ่ายรวม", value: fmt(totalExpenses), suffix: "บาท", icon: Receipt, color: "#92400e", bg: "#fef3c7" };
-  const stockCard = { label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)", value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#6d28d9", bg: "#ede9fe" };
+  const stockCard = { label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)", value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#660000", bg: "#fdf0f0" };
   const loanCard = { label: "คงเหลือสินเชื่อ/เงินกู้", value: fmt(totalLoanRemaining), suffix: "บาท", icon: CreditCard, color: "#0e7490", bg: "#cffafe" };
 
   // theme color ต่อแท็บ
@@ -2437,7 +2437,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     purchases: { header: "#1e40af", headerText: "#fff", cardBg: "#eff6ff", border: "#bfdbfe" },
     sales:     { header: "#166534", headerText: "#fff", cardBg: "#f0fdf4", border: "#bbf7d0" },
     expenses:  { header: "#92400e", headerText: "#fff", cardBg: "#fffbeb", border: "#fde68a" },
-    stock:     { header: "#5b21b6", headerText: "#fff", cardBg: "#f5f3ff", border: "#ddd6fe" },
+    stock:     { header: "#660000", headerText: "#fff", cardBg: "#fdf5f5", border: "#fddcdc" },
     loans:     { header: "#0e7490", headerText: "#fff", cardBg: "#ecfeff", border: "#a5f3fc" },
     cashflow:  { header: "#1e3a5f", headerText: "#fff", cardBg: "#f0f4ff", border: "#c7d7f5" },
   };
@@ -3017,7 +3017,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" lineThemeColor="#5b21b6" />
+            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" lineThemeColor="#660000" />
           </div>
           <div id="dash-export-stock">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -3032,19 +3032,19 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             const anySelected = visibleTypes.some(t => selectedStockTypes[t]);
             const selectedIds = visibleTypes.filter(t => selectedStockTypes[t]).map(t => `dash-stock-type-${t.replace(/\s/g, "-")}`);
             return (
-              <div style={{ background: "#f5f3ff", border: `1px solid ${theme.border}`, borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#4c1d95" }}>
+              <div style={{ background: "#fdf5f5", border: `1px solid ${theme.border}`, borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#660000" }}>
                   <input type="checkbox" checked={allSelected} onChange={e => {
                     const next = {};
                     visibleTypes.forEach(t => { next[t] = e.target.checked; });
                     setSelectedStockTypes(next);
-                  }} style={{ width: 15, height: 15, accentColor: "#5b21b6" }} />
+                  }} style={{ width: 15, height: 15, accentColor: "#660000" }} />
                   เลือกทั้งหมด
                 </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
                   {visibleTypes.map(t => (
-                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#5b21b6", background: selectedStockTypes[t] ? "#ddd6fe" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#a78bfa" : "#ddd6fe"}`, borderRadius: 6, padding: "3px 9px" }}>
-                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#5b21b6" }} />
+                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#660000", background: selectedStockTypes[t] ? "#fddcdc" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#e08080" : "#fddcdc"}`, borderRadius: 6, padding: "3px 9px" }}>
+                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#660000" }} />
                       {t}
                     </label>
                   ))}
@@ -3169,7 +3169,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                 const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
                 return (
                   <div key={g.type} id={typeId} style={{ background: "#fff", padding: 16, width: 480, fontFamily: "inherit" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#5b21b6", background: "#f5f3ff", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#660000", background: "#fdf5f5", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead><tr>
                         <th style={{ ...thStyle, fontSize: 12 }}>สินค้า</th>
@@ -3181,14 +3181,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                         <tr key={s.productId}>
                           <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#5b21b6" }}>{fmt(s.totalCost)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#660000" }}>{fmt(s.totalCost)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
                         </tr>
                       ))}</tbody>
-                      <tfoot><tr style={{ background: "#5b21b6" }}>
+                      <tfoot><tr style={{ background: "#660000" }}>
                         <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe", fontSize: 12 }}>{fmt(g.value)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc", fontSize: 12 }}>{fmt(g.value)}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
                       </tr></tfoot>
                     </table>
@@ -3221,10 +3221,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                           <tr
                             onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
                             style={{ cursor: "pointer" }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = "#f5f3ff"; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "#fdf5f5"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
                           >
-                            <td style={{ ...tdStyle, fontWeight: 700, color: "#5b21b6" }}>{g.type}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: "#660000" }}>{g.type}</td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
@@ -3233,14 +3233,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                             <tr key={s.productId}>
                               <td style={{ ...tdStyle, color: "#111827", paddingLeft: 24 }}>- {s.name}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.qty)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: "#5b21b6" }}>{fmt(s.totalCost)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", color: "#660000" }}>{fmt(s.totalCost)}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.avgCost)}</td>
                             </tr>
                           ))}
-                          <tr style={{ background: "#5b21b6" }}>
+                          <tr style={{ background: "#660000" }}>
                             <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe" }}>{fmt(g.value)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc" }}>{fmt(g.value)}</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                           </tr>
                         </>
@@ -3248,13 +3248,13 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                       {!isExpanded && (
                         <tr
                           onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
-                          style={{ cursor: "pointer", background: "#5b21b6" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "#6d28d9"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "#5b21b6"; }}
+                          style={{ cursor: "pointer", background: "#660000" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "#660000"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "#660000"; }}
                         >
                           <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#ddd6fe" }}>{fmt(g.value)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc" }}>{fmt(g.value)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                         </tr>
                       )}
@@ -3268,10 +3268,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               {stockByType.length > 0 && (
                 <tfoot>
                   <tr style={{ borderTop: `3px solid ${theme.header}` }}>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>ผลรวม</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#5b21b6", fontSize: 14 }}>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: "#660000", fontSize: 14 }}>ผลรวม</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>
                       {(() => {
                         const totalQty = stockByType.reduce((s, g) => s + g.qty, 0);
                         const totalVal = stockByType.reduce((s, g) => s + g.value, 0);
@@ -5459,7 +5459,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
               return [
                 { label: "น้ำหนักรวม", value: fmt(totalQty), color: "#1f2937", bg: "#f9fafb" },
                 { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), color: "#1A6B35", bg: "#fef2f2" },
-                { label: "น้ำหนักสุทธิ", value: fmt(netWeight), color: "#3c3489", bg: "#f5f3ff" },
+                { label: "น้ำหนักสุทธิ", value: fmt(netWeight), color: "#3c3489", bg: "#fdf5f5" },
               ].map((item) => (
                 <div key={item.label} style={{ background: item.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center", border: `1px solid ${item.color}22` }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{item.label}</div>
