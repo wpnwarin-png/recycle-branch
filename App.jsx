@@ -129,32 +129,56 @@ async function loadHtml2Canvas() {
 }
 
 // capture element เป็น canvas โดย clone ไปวางใน off-screen container เพื่อหลีกเลี่ยง viewport clip บนมือถือ
-async function captureElementToCanvas(el, captureWidth = 1200) {
+async function captureElementToCanvas(el, captureWidth) {
   const ok = await loadHtml2Canvas();
   if (!ok) return null;
+
+  // ใช้ scrollWidth จริงของ element แต่ไม่ต่ำกว่า 900px (เพื่อให้ตัวหนังสือชัดบนมือถือ) และไม่เกิน 1400
+  const elWidth = Math.max(el.scrollWidth, el.offsetWidth, 320);
+  const useWidth = captureWidth || Math.min(Math.max(elWidth, 900), 1400);
 
   // clone และวางใน off-screen wrapper กว้าง captureWidth เพื่อให้ layout คำนวณใหม่เต็มความกว้าง
   const wrapper = document.createElement("div");
   wrapper.style.cssText = `
     position: fixed; left: -99999px; top: 0;
-    width: ${captureWidth}px; min-width: ${captureWidth}px;
+    width: ${useWidth}px; min-width: ${useWidth}px;
     background: #ffffff; z-index: -1;
     font-family: 'Noto Sans Thai', sans-serif;
     overflow: visible;
   `;
+  // sync ค่า React controlled inputs ลง DOM attribute ก่อน clone
+  // (React เก็บ value ใน .value property ไม่ใช่ attribute ทำให้ cloneNode ไม่ได้ค่า)
+  el.querySelectorAll("input, textarea, select").forEach(el => {
+    if (el.tagName === "SELECT") {
+      el.setAttribute("data-value", el.value);
+    } else {
+      el.setAttribute("value", el.value);
+    }
+  });
+
   const clone = el.cloneNode(true);
   clone.style.cssText += "; width: 100%; overflow: visible; max-width: none;";
 
   // แทน input ทุกตัวใน clone ด้วย div แสดงค่า เพื่อให้ html2canvas capture ได้
   clone.querySelectorAll("input").forEach(input => {
-    const val = input.value;
+    const val = input.getAttribute("value") || input.value || "";
+    const computed = window.getComputedStyle(input);
     const div = document.createElement("div");
     div.textContent = val;
-    div.style.cssText = input.style.cssText + "; display: flex; align-items: center; justify-content: flex-end;";
-    div.style.width = window.getComputedStyle(input).width;
-    div.style.minWidth = "60px";
-    div.style.fontWeight = "600";
-    div.style.color = "#374151";
+    div.style.width = computed.width;
+    div.style.minWidth = "40px";
+    div.style.height = computed.height;
+    div.style.padding = computed.padding;
+    div.style.fontSize = computed.fontSize;
+    div.style.fontFamily = computed.fontFamily;
+    div.style.border = computed.border;
+    div.style.borderRadius = computed.borderRadius;
+    div.style.background = computed.backgroundColor || "#fff";
+    div.style.color = "#111827";
+    div.style.display = "flex";
+    div.style.alignItems = "center";
+    div.style.justifyContent = input.style.textAlign === "right" ? "flex-end" : "flex-start";
+    div.style.boxSizing = "border-box";
     input.parentNode.replaceChild(div, input);
   });
   // ปิด overflow ทุก node ใน clone
@@ -181,7 +205,7 @@ async function captureElementToCanvas(el, captureWidth = 1200) {
       scrollY: 0,
       width: clone.scrollWidth,
       height: clone.scrollHeight,
-      windowWidth: captureWidth,
+      windowWidth: useWidth,
     });
   } finally {
     document.body.removeChild(wrapper);
@@ -213,29 +237,150 @@ async function shareCanvas(canvas, title) {
   }
 }
 
+// สร้าง HTML card style สวยงามจาก element (ดึง table data แล้ว render ใหม่)
+function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
+  const container = document.createElement("div");
+  container.style.cssText = `width:700px;background:#f5f5f5;padding:0;font-family:'Noto Sans Thai',Arial,sans-serif;`;
+
+  // header
+  const header = document.createElement("div");
+  header.style.cssText = `background:${themeColor};color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;`;
+  const titleEl = document.createElement("span");
+  titleEl.style.cssText = "font-size:16px;font-weight:700;";
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+  container.appendChild(header);
+
+  // body: ดึง tables จาก element มา render ใหม่
+  const body = document.createElement("div");
+  body.style.cssText = "padding:12px;display:flex;flex-direction:column;gap:12px;";
+
+  el.querySelectorAll("table").forEach(tbl => {
+    const card = document.createElement("div");
+    card.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
+
+    const newTbl = document.createElement("table");
+    newTbl.style.cssText = "width:100%;border-collapse:collapse;";
+
+    tbl.querySelectorAll("thead tr").forEach(row => {
+      const thead = document.createElement("thead");
+      const tr = document.createElement("tr");
+      tr.style.cssText = "background:#eef0f4;";
+      row.querySelectorAll("th").forEach(th => {
+        const ntd = document.createElement("th");
+        ntd.style.cssText = `padding:9px 14px;font-size:14px;font-weight:700;color:#333;text-align:${th.style.textAlign || "left"};`;
+        ntd.textContent = th.textContent.trim();
+        tr.appendChild(ntd);
+      });
+      thead.appendChild(tr);
+      newTbl.appendChild(thead);
+    });
+
+    const tbody = document.createElement("tbody");
+    tbl.querySelectorAll("tbody tr").forEach((row, idx) => {
+      const tr = document.createElement("tr");
+      tr.style.cssText = `background:${idx % 2 === 0 ? "#fff" : "#fafafa"};border-bottom:1px solid #f0f0f0;`;
+      row.querySelectorAll("td").forEach(td => {
+        const ntd = document.createElement("td");
+        const align = td.style.textAlign || (td.querySelector("[style*='right']") ? "right" : "left");
+        const isValue = td.style.color?.includes("6B35") || td.style.color?.includes("blue") || td.style.color?.includes("5fa5") || (td.style.color && td.style.color !== "");
+        const text = td.textContent.trim();
+        const looksLikeMoney = /^[฿-]?[\d,]+(\.\d+)?$/.test(text.replace(/,/g, "").replace("฿", ""));
+        ntd.style.cssText = `padding:8px 14px;font-size:15px;text-align:${align};color:${looksLikeMoney && text.includes("฿") ? "#c0392b" : "#333"};`;
+        ntd.textContent = text;
+        tr.appendChild(ntd);
+      });
+      tbody.appendChild(tr);
+    });
+    newTbl.appendChild(tbody);
+
+    tbl.querySelectorAll("tfoot tr").forEach(row => {
+      const tfoot = document.createElement("tfoot");
+      const tr = document.createElement("tr");
+      tr.style.cssText = `background:${themeColor};`;
+      row.querySelectorAll("td").forEach((td, i) => {
+        const ntd = document.createElement("td");
+        const align = td.style.textAlign || (i > 0 ? "right" : "left");
+        const text = td.textContent.trim();
+        const isValueCol = i >= 1;
+        ntd.style.cssText = `padding:9px 14px;font-size:15px;font-weight:700;color:${isValueCol ? "#f4c07a" : "#fff"};text-align:${align};`;
+        ntd.textContent = text;
+        tr.appendChild(ntd);
+      });
+      tfoot.appendChild(tr);
+      newTbl.appendChild(tfoot);
+    });
+
+    card.appendChild(newTbl);
+    body.appendChild(card);
+  });
+
+  // ถ้าไม่มี table ให้ใช้ text แบบ list
+  if (el.querySelectorAll("table").length === 0) {
+    const rows = el.querySelectorAll("[style*='display: flex'], [style*='display:flex']");
+    const listDiv = document.createElement("div");
+    listDiv.style.cssText = "background:#fff;border-radius:8px;padding:12px 16px;";
+    rows.forEach((row, idx) => {
+      if (row.children.length < 2) return;
+      const item = document.createElement("div");
+      item.style.cssText = `display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f0f0;background:${idx%2===0?"#fff":"#fafafa"};`;
+      const label = document.createElement("span");
+      label.style.cssText = "font-size:15px;color:#333;font-weight:" + (row.style.fontWeight || "400");
+      label.textContent = row.children[0]?.textContent?.trim() || "";
+      const val = document.createElement("span");
+      val.style.cssText = "font-size:15px;font-weight:600;color:#1a6b35;";
+      val.textContent = row.children[row.children.length-1]?.textContent?.trim() || "";
+      item.appendChild(label);
+      item.appendChild(val);
+      listDiv.appendChild(item);
+    });
+    body.appendChild(listDiv);
+  }
+
+  container.appendChild(body);
+  return container;
+}
+
 // แปลง DOM element เป็นรูปภาพแล้วแชร์ LINE (มือถือ) หรือดาวน์โหลด (คอม)
-async function shareElementToLine(elementId, title = "แชร์") {
+async function shareElementToLine(elementId, title = "แชร์", themeColor) {
   const el = document.getElementById(elementId);
   if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
   try {
-    const canvas = await captureElementToCanvas(el);
-    if (canvas) { await shareCanvas(canvas, title); }
-    else {
-      const txt = (el.innerText || el.textContent || "").slice(0, 500);
-      window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
+    const ok = await loadHtml2Canvas();
+    if (!ok) throw new Error("no html2canvas");
+
+    // ตรวจ theme color จาก header ของ element
+    const headerEl = el.querySelector("[style*='background']");
+    const autoColor = themeColor || "#1a2744";
+
+    const container = buildBeautifulHtml(el, title, autoColor);
+    container.style.cssText += ";position:fixed;left:-99999px;top:0;";
+    document.body.appendChild(container);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    let canvas;
+    try {
+      canvas = await window.html2canvas(container, {
+        scale: 2, useCORS: true, backgroundColor: "#f5f5f5",
+        width: 700, height: container.scrollHeight, windowWidth: 700,
+      });
+    } finally {
+      document.body.removeChild(container);
     }
-  } catch (e) {
-    const txt = (el.innerText || el.textContent || "").slice(0, 500);
+    if (canvas) await shareCanvas(canvas, title);
+  } catch(e) {
+    // fallback: text
+    const txt = (el.innerText || "").slice(0, 500);
     window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
   }
 }
 
 // ปุ่ม LINE ขนาดเล็ก (ใช้ใน ExportToolbar และหัวกล่อง)
-function LineShareButton({ elementId, title = "แชร์", small = false }) {
+function LineShareButton({ elementId, title = "แชร์", small = false, themeColor }) {
   const [loading, setLoading] = React.useState(false);
   return (
     <button
-      onClick={async () => { setLoading(true); await shareElementToLine(elementId, title); setLoading(false); }}
+      onClick={async () => { setLoading(true); await shareElementToLine(elementId, title, themeColor); setLoading(false); }}
       disabled={loading}
       title="แชร์ LINE"
       style={{
@@ -518,7 +663,7 @@ function handleEnterNavigate(e, onSubmit) {
   }
 }
 // ExportToolbar component — renders export buttons for a section
-function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = null, lineTitle = "" }) {
+function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = null, lineTitle = "", lineThemeColor }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       {label && <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{label}</span>}
@@ -543,7 +688,7 @@ function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = nu
       >
         <Image size={13} /> รูปภาพ
       </button>
-      {lineElementId && <LineShareButton elementId={lineElementId} title={lineTitle || label || "แชร์"} />}
+      {lineElementId && <LineShareButton elementId={lineElementId} title={lineTitle || label || "แชร์"} themeColor={lineThemeColor} />}
     </div>
   );
 }
@@ -2329,7 +2474,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const BoxHeader = ({ title, shareId, shareTitle }) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.header, borderRadius: "10px 10px 0 0", padding: "10px 16px", marginBottom: 14 }}>
       <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.headerText }}>{title}</h3>
-      {shareId && <LineShareButton elementId={shareId} title={shareTitle || title} small />}
+      {shareId && <LineShareButton elementId={shareId} title={shareTitle || title} small themeColor={theme.header} />}
     </div>
   );
 
@@ -2498,7 +2643,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} lineElementId="dash-export-purchases" lineTitle="ยอดซื้อ" />
+            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} lineElementId="dash-export-purchases" lineTitle="ยอดซื้อ" lineThemeColor="#1e40af" />
           </div>
           <div id="dash-export-purchases">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2668,7 +2813,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} lineElementId="dash-export-sales" lineTitle="ยอดขาย" />
+            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} lineElementId="dash-export-sales" lineTitle="ยอดขาย" lineThemeColor="#166534" />
           </div>
           <div id="dash-export-sales">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2758,7 +2903,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} lineElementId="dash-export-expenses" lineTitle="ค่าใช้จ่าย" />
+            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} lineElementId="dash-export-expenses" lineTitle="ค่าใช้จ่าย" lineThemeColor="#92400e" />
           </div>
           <div id="dash-export-expenses">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2872,7 +3017,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" />
+            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" lineThemeColor="#5b21b6" />
           </div>
           <div id="dash-export-stock">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
@@ -2909,9 +3054,100 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     disabled={sharingStockTypes}
                     onClick={async () => {
                       setSharingStockTypes(true);
-                      const selectedNames = visibleTypes.filter(t => selectedStockTypes[t]);
-                      await shareMultipleElementsToLine(selectedIds, `สต๊อก — ${selectedNames.join(", ")}`);
-                      setSharingStockTypes(false);
+                      try {
+                        const ok = await loadHtml2Canvas();
+                        if (!ok) { alert("ไม่สามารถโหลด html2canvas"); return; }
+
+                        const selectedNames = visibleTypes.filter(t => selectedStockTypes[t]);
+                        const selectedGroups = stockByType.filter(g => selectedStockTypes[g.type]);
+
+                        // สร้าง HTML card style ตามตัวอย่าง
+                        const container = document.createElement("div");
+                        container.style.cssText = "position:fixed;left:-99999px;top:0;width:700px;background:#f5f5f5;padding:0;font-family:'Noto Sans Thai',sans-serif;";
+
+                        // header รวม
+                        const header = document.createElement("div");
+                        header.style.cssText = "background:#5a1e1e;color:#fff;padding:16px 22px;display:flex;align-items:center;gap:10px;";
+                        header.innerHTML = `<span style="font-size:22px">📦</span><span style="font-size:16px;font-weight:700;">สรุปสต็อก: ${selectedNames.join(", ")}</span><span style="margin-left:auto;font-size:13px;color:rgba(255,255,255,0.7)">วันที่ ${today}</span>`;
+                        container.appendChild(header);
+
+                        const body = document.createElement("div");
+                        body.style.cssText = "padding:16px;display:flex;flex-direction:column;gap:16px;";
+
+                        selectedGroups.forEach(g => {
+                          const visItems = g.items.filter(s => s.qty > 0);
+                          if (visItems.length === 0) return;
+
+                          const card = document.createElement("div");
+                          card.style.cssText = "background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
+
+                          // card header
+                          const ch = document.createElement("div");
+                          ch.style.cssText = "background:#1a2744;color:#fff;padding:12px 18px;display:flex;align-items:center;gap:8px;";
+                          ch.innerHTML = `<span style="color:#5b9bd5;font-size:16px">◆</span><span style="font-size:18px;font-weight:700;">${g.type}</span>`;
+                          card.appendChild(ch);
+
+                          // table
+                          const tbl = document.createElement("table");
+                          tbl.style.cssText = "width:100%;border-collapse:collapse;";
+
+                          // thead
+                          const thead = document.createElement("thead");
+                          thead.innerHTML = `<tr style="background:#f0f0f0;">
+                            <th style="text-align:left;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">รายการสินค้า</th>
+                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">คงเหลือ</th>
+                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">มูลค่า</th>
+                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">ราคาเฉลี่ย</th>
+                          </tr>`;
+                          tbl.appendChild(thead);
+
+                          const tbody = document.createElement("tbody");
+                          visItems.forEach((s, idx) => {
+                            const p = products.find(pr => pr.id === s.productId);
+                            const unit = p?.unit || "";
+                            const bg = idx % 2 === 0 ? "#fff" : "#fafafa";
+                            const tr = document.createElement("tr");
+                            tr.style.cssText = `background:${bg};border-bottom:1px solid #f0f0f0;`;
+                            tr.innerHTML = `
+                              <td style="padding:9px 16px;font-size:15px;color:#222;">${s.name}</td>
+                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#444;">${fmtInt(s.qty)} ${unit}</td>
+                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#c0392b;font-weight:600;">฿${fmt(s.totalCost)}</td>
+                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#333;">${fmt(s.avgCost)}</td>`;
+                            tbody.appendChild(tr);
+                          });
+                          tbl.appendChild(tbody);
+
+                          // tfoot
+                          const tfoot = document.createElement("tfoot");
+                          tfoot.innerHTML = `<tr style="background:#1a2744;">
+                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;">รวม</td>
+                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;text-align:right;">${fmtInt(g.qty)}</td>
+                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#f4a261;text-align:right;">฿${fmt(g.value)}</td>
+                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;text-align:right;">${fmt(g.avgCost)}</td>
+                          </tr>`;
+                          tbl.appendChild(tfoot);
+                          card.appendChild(tbl);
+                          body.appendChild(card);
+                        });
+
+                        container.appendChild(body);
+                        document.body.appendChild(container);
+                        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+                        let canvas;
+                        try {
+                          canvas = await window.html2canvas(container, {
+                            scale: 2, useCORS: true, backgroundColor: "#f5f5f5",
+                            width: 700, height: container.scrollHeight,
+                            windowWidth: 700,
+                          });
+                        } finally {
+                          document.body.removeChild(container);
+                        }
+                        if (canvas) await shareCanvas(canvas, `สต๊อก — ${selectedNames.join(", ")} — ${today}`);
+                      } finally {
+                        setSharingStockTypes(false);
+                      }
                     }}
                     style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", borderRadius: 7, border: "none", background: sharingStockTypes ? "#9ca3af" : "#06C755", color: "#fff", cursor: sharingStockTypes ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>
                     <svg width={14} height={14} viewBox="0 0 24 24" fill="currentColor">
@@ -3056,7 +3292,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} lineElementId="dash-export-loans" lineTitle="สินเชื่อ/เงินกู้" />
+            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} lineElementId="dash-export-loans" lineTitle="สินเชื่อ/เงินกู้" lineThemeColor="#0e7490" />
           </div>
           <div id="dash-export-loans" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
             {renderCard(loanCard, true)}
@@ -3230,7 +3466,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   exportExcel(rows, "เงินหมุนร้าน.xlsx", "เงินหมุน");
                 }}
                 onImage={() => printAsPDF("dash-cashflow", "สรุปเงินหมุนร้าน")}
-                lineElementId="dash-cashflow"
+                lineElementId="dash-cashflow" lineThemeColor="#1e3a5f"
                 lineTitle="สรุปเงินหมุนร้าน"
               />
             </div>
@@ -5914,6 +6150,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const isMobile = useIsMobileView();
   const [creditManual, setCreditManualState] = React.useState(() => {
     try { return Number(localStorage.getItem("creditManual") || "0"); } catch { return 0; }
   });
@@ -6311,48 +6548,48 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           </div>
         </div>
         <div id="credit-day-summary-print">
-          <div style={{ padding: "8px 14px", fontWeight: 700, fontSize: 14, borderBottom: "1px solid #e5e7eb" }}>
+          <div style={{ padding: "8px 14px", fontWeight: 700, fontSize: 15, borderBottom: "1px solid #e5e7eb" }}>
             สรุปยอดใช้เงิน — {creditDate}
           </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 0 }}>
           {/* ซ้าย: ยอดใช้เงินต่อวัน */}
-          <div>
-            <div style={{ background: "#6b1f1f", color: "#fff", padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
+          <div style={isMobile ? { borderBottom: "2px solid #e5e7eb" } : {}}>
+            <div style={{ background: "#6b1f1f", color: "#fff", padding: "8px 16px", fontSize: 14, fontWeight: 700 }}>ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
             {[
               { label: "ค่าสินค้า", value: creditDaySummary.dayCost, color: "#E8F5EC" },
               { label: "ค่าใช้จ่าย", value: creditDaySummary.dayExp, color: "#fff" },
               { label: "หัก รายได้จากสินค้า", value: -creditDaySummary.dayRev, color: "#E8F5EC" },
               { label: "รวมยอดใช้วันนี้", value: creditDaySummary.dayNet, color: "#e8d4d4", bold: true },
             ].map((row, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f3f0f0" }}>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 16px", background: row.color, borderBottom: "1px solid #f3f0f0" }}>
+                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
+                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
                   {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
                 </span>
               </div>
             ))}
           </div>
           {/* ขวา: ยอดที่ต้องเบิกคืน */}
-          <div style={{ borderLeft: "1px solid #e5e7eb" }}>
-            <div style={{ background: "#1a3a5c", color: "#fff", padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>ยอดใช้ที่ต้องเบิกคืน</div>
+          <div style={isMobile ? {} : { borderLeft: "1px solid #e5e7eb" }}>
+            <div style={{ background: "#1a3a5c", color: "#fff", padding: "8px 16px", fontSize: 14, fontWeight: 700 }}>ยอดใช้ที่ต้องเบิกคืน</div>
             {[
               { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNetFloor, color: "#e6f1fb" },
               { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBeforeFloor, color: "#fff" },
               { label: "ยอดตกหล่น", value: null, color: "#e6f1fb", input: true },
               { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true, rawTotal: creditDaySummary.rawTotal },
             ].map((row, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 16px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
+                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
                 {row.input ? (
                   <input type="number" value={creditManual} onChange={(e) => setCreditManual(e.target.value)}
-                    style={{ width: 100, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "2px 8px", fontSize: 13 }} />
+                    style={{ width: 120, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
                 ) : (
                   <div style={{ textAlign: "right" }}>
-                    <span style={{ fontSize: 13, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
+                    <span style={{ fontSize: row.bold ? 18 : 15, fontWeight: row.bold ? 800 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
                       {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
                     </span>
                     {row.rawTotal != null && row.rawTotal !== row.value && (
-                      <div style={{ fontSize: 10, color: "#9ca3af" }}>ก่อนปัด: {fmt(row.rawTotal)}</div>
+                      <div style={{ fontSize: 11, color: "#9ca3af" }}>ก่อนปัด: {fmt(row.rawTotal)}</div>
                     )}
                   </div>
                 )}
@@ -6361,24 +6598,24 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           </div>
         </div>
         {/* ธนาคารที่จะโอนคืนวงเงิน */}
-        <div style={{ borderTop: "1px solid #e5e7eb", padding: "10px 14px", background: "#f9fafb" }}>
-          <div style={{ fontWeight: 600, fontSize: 13, color: "#374151", marginBottom: 8 }}>โอนคืนวงเงินผ่าน</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 12px" }}>
+        <div style={{ borderTop: "1px solid #e5e7eb", padding: "12px 16px", background: "#f9fafb" }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "#374151", marginBottom: 10 }}>โอนคืนวงเงินผ่าน</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 8 : "0 12px" }}>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 3 }}>ธนาคาร</div>
-              <input style={inputStyle} value={returnBankName} onChange={(e) => setReturnBankName(e.target.value)} placeholder="เช่น กสิกรไทย" />
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>ธนาคาร</div>
+              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankName} onChange={(e) => setReturnBankName(e.target.value)} placeholder="เช่น กสิกรไทย" />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 3 }}>เลขที่บัญชี</div>
-              <input style={inputStyle} value={returnBankNo} onChange={(e) => setReturnBankNo(e.target.value)} placeholder="xxx-x-xxxxx-x" />
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>เลขที่บัญชี</div>
+              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankNo} onChange={(e) => setReturnBankNo(e.target.value)} placeholder="xxx-x-xxxxx-x" />
             </div>
             <div>
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 3 }}>ชื่อบัญชี</div>
-              <input style={inputStyle} value={returnBankOwner} onChange={(e) => setReturnBankOwner(e.target.value)} placeholder="ชื่อเจ้าของบัญชี" />
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>ชื่อบัญชี</div>
+              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankOwner} onChange={(e) => setReturnBankOwner(e.target.value)} placeholder="ชื่อเจ้าของบัญชี" />
             </div>
           </div>
           {(returnBankName || returnBankNo) && (
-            <div style={{ marginTop: 8, fontSize: 13, color: "#185fa5", fontWeight: 600 }}>
+            <div style={{ marginTop: 10, fontSize: 15, color: "#185fa5", fontWeight: 700 }}>
               ยอดโอนคืน: ฿{fmt(creditDaySummary.total)}
             </div>
           )}
