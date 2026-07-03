@@ -6310,28 +6310,52 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const hasAccPayment = (doc, field) =>
       accs.size === 0 || (doc.payments||[]).some(p => accs.has(p[field]));
 
-    const dayCost = allPurchaseRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "fromStoreBankId"))
-      .reduce((s,r)=>s+r.total,0);
-    const dayExp  = allExpenseRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "fromStoreBankId"))
-      .reduce((s,r)=>s+r.total,0);
-    const dayRev  = allSaleRows
-      .filter(r => r.date === creditDate && r.payStatus === "paid" && hasAccPayment(r.doc, "toStoreBankId"))
-      .reduce((s,r)=>s+r.total,0);
+    // คำนวณยอดที่ชำระจริงผ่านบัญชีที่เลือก เฉพาะ payment ตรงวันที่ และปัดเป็นเต็มบาท (ยอดที่โอนจริง)
+    const sumActualPayments = (rows, field, dateFilter, paymentDateFilter) =>
+      rows.filter(dateFilter).reduce((s, r) => {
+        const pmts = (r.doc.payments || []).filter(p => {
+          const accOk = accs.size === 0 ? true : accs.has(p[field]);
+          const dateOk = paymentDateFilter ? paymentDateFilter(p) : true;
+          return accOk && dateOk;
+        });
+        const rowSum = pmts.reduce((ps, p) => ps + (Number(p.amount) || 0), 0);
+        return s + Math.floor(rowSum); // ปัดเป็นเต็มบาทต่อบิล
+      }, 0);
+
+    const dayCost = sumActualPayments(
+      allPurchaseRows,
+      "fromStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      p => p.date === creditDate
+    );
+    const dayExp  = sumActualPayments(
+      allExpenseRows,
+      "fromStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      p => p.date === creditDate
+    );
+    const dayRev  = sumActualPayments(
+      allSaleRows,
+      "toStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      p => p.date === creditDate
+    );
     const dayNet  = dayCost + dayExp - dayRev;
 
     const pendingBefore =
-      allPurchaseRows.filter(r => r.date < creditDate && r.payStatus==="paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc,"fromStoreBankId")).reduce((s,r)=>s+r.total,0)
-      + allExpenseRows.filter(r => r.date < creditDate && r.payStatus==="paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc,"fromStoreBankId")).reduce((s,r)=>s+r.total,0)
-      - allSaleRows.filter(r => r.date < creditDate && r.payStatus==="paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc,"toStoreBankId")).reduce((s,r)=>s+r.total,0);
+      sumActualPayments(allPurchaseRows, "fromStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate)
+      + sumActualPayments(allExpenseRows, "fromStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate)
+      - sumActualPayments(allSaleRows, "toStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate);
 
     const manual = Number(creditManual) || 0;
     const rawTotal = dayNet + pendingBefore + manual;
-    const total = Math.floor(rawTotal); // ปัดลงเป็นจำนวนเต็มบาท
+    const total = Math.floor(rawTotal);
+    const dayCostFloor = Math.floor(dayCost);
+    const dayExpFloor = Math.floor(dayExp);
+    const dayRevFloor = Math.floor(dayRev);
     const dayNetFloor = Math.floor(dayNet);
     const pendingBeforeFloor = Math.floor(pendingBefore);
-    return { dayCost, dayExp, dayRev, dayNet, dayNetFloor, pendingBefore, pendingBeforeFloor, manual, total, rawTotal };
+    return { dayCost: dayCostFloor, dayExp: dayExpFloor, dayRev: dayRevFloor, dayNet: dayNetFloor, dayNetFloor, pendingBefore: pendingBeforeFloor, pendingBeforeFloor, manual, total, rawTotal };
   }, [creditDate, allPurchaseRows, allExpenseRows, allSaleRows, payFlags, creditManual, creditAccounts]);
 
   const unpaidPurchases = allPurchaseRows.filter((r) => r.payStatus !== "paid");
