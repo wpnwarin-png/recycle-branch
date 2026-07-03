@@ -3648,11 +3648,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                       <td style={{ ...tdStyle, fontWeight: 700, fontSize: 15 }}>ยอดรวม + สต็อกคงเหลือ</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 18, color: "#1e40af" }}>฿{fmt(grandTotalWithStock)}</td>
                     </tr>
-                    </tr>
-                    <tr style={{ background: "#f9fafb" }}>
-                      <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>+ มูลค่าสต๊อกสินค้า (ทุน) — ไม่รวมในเงินสด</td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280", fontSize: 12 }}>฿{fmt(stockVal)}</td>
-                    </tr>
                   </tfoot>
                 </table>
               </div>
