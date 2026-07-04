@@ -11269,7 +11269,6 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
       <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", overflowY: "hidden", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
         {[
           { key: "monthly", label: "รายเดือน" },
-          { key: "yearly", label: "สรุปรายปี" },
           { key: "yearlyPL", label: "งบกำไรขาดทุนรายปี" },
         ].map((opt) => (
           <button key={opt.key} onClick={() => setReportView(opt.key)}
@@ -11436,8 +11435,9 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         const endInvY = stockValueBefore(new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10));
         const purchInRY = movements.filter(mv => mv.type === "in" && !mv.isOpening && inR(mv.date))
           .reduce((s, mv) => s + (Number(mv.qty) || 0) * (Number(mv.price) || 0), 0);
-        const purchInRYTotal = purchInRY + openingPurchase; // รวมซื้อยกมา
+        const purchInRYTotal = purchInRY + openingPurchase; // รวมซื้อยกมา (ไม่รวมต้นทุนยกมา)
         const availableY = beginInvY + purchInRYTotal;
+        const costY = (availableY - endInvY) + openingCost; // ต้นทุนขาย + ต้นทุนยกมา
         const costY = availableY - endInvY;
 
         const expensesInRY = expenses.filter(e => inR(e.billDate || e.date));
@@ -11453,7 +11453,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
         // รวมยอดยกมา
         const totalIncomeY = totalRevY + openingRevenue;
-        const totalCostY = costY + openingCost;
+        const totalCostY = costY; // costY รวม openingCost ไว้แล้ว
         const totalExpWithOpening = totalExpY + openingExpense;
         const grossProfitY = totalIncomeY - totalCostY;
         const netProfitY = grossProfitY - totalExpWithOpening;
@@ -11500,9 +11500,10 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
             <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>ต้นทุนขาย:</div>
             <Row label="สินค้าคงเหลือยกมาต้นงวด" value={`฿${fmt(beginInvY)}`} indent />
-            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRYTotal + openingCost)}`} indent />
-            <Row label="สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(availableY + openingCost)}`} indent />
+            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRYTotal)}`} indent />
+            <Row label="สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(availableY)}`} indent />
             <Row label="หัก สินค้าคงเหลือปลายงวด" value={`-฿${fmt(endInvY)}`} indent />
+            {openingCost > 0 && <Row label="บวก ต้นทุนยกมา" value={`+฿${fmt(openingCost)}`} indent />}
             <Row label="ต้นทุนขาย" value={`฿${fmt(totalCostY)}`} bold color="#111827" />
 
             <div style={{ marginTop: 16, marginBottom: 8 }}>
@@ -11559,41 +11560,6 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         <select style={{ ...inputStyle, width: 100 }} value={year} onChange={(e) => setYear(Number(e.target.value))}>
           {yearOptions.map((y) => <option key={y} value={y}>ปี {y}</option>)}
         </select>
-      </div>
-
-      {/* ยอดยกมา / รายการพิเศษ — แสดงด้านบนสุด */}
-      <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginBottom: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ (กรอกเองบันทึกอัตโนมัติ)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px 16px" }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล (ยอดยกมา)</label>
-            <input type="month" style={inputStyle} value={openingMonth} onChange={(e) => setOpeningMonth(e.target.value)} />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>รายได้ยกมา (บาท)</label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue || ""} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ต้นทุนยกมา (บาท)</label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost || ""} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ยอดซื้อยกมา (บาท)</label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingPurchase || ""} onChange={(e) => setOpeningPurchase(e.target.value)} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ค่าใช้จ่ายยกมา (บาท)</label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingExpense || ""} onChange={(e) => setOpeningExpense(e.target.value)} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>กำไร/ขาดทุนยกมา (บาท) <span style={{ fontSize: 10, color: "#6b7280" }}>บวก=กำไร ลบ=ขาดทุน</span></label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingProfit || ""} onChange={(e) => setOpeningProfit(e.target.value)} placeholder="0" />
-          </div>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>มูลค่าลงทุนที่ดิน — หักออก (บาท)</label>
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={landDebtReport || ""} onChange={(e) => setLandDebtReport(e.target.value)} placeholder="0" />
-          </div>
-        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
