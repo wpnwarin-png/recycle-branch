@@ -11080,20 +11080,39 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [reportView, setReportView] = useState("monthly"); // "monthly" | "yearly"
   const [editingShareholders, setEditingShareholders] = useState(false);
-  const openingRevenue = Number(companySettings?.openingRevenue) || 0;
-  const openingCost = Number(companySettings?.openingCost) || 0;
-  const openingMonth = companySettings?.openingMonth || "";
-  const openingProfit = Number(companySettings?.openingProfit) || 0; // กำไร/ขาดทุนยกมา
-  const landDebtReport = Number(companySettings?.landDebt) || 0;     // มูลค่าลงทุนที่ดิน
-  const openingExpense = Number(companySettings?.openingExpense) || 0; // ค่าใช้จ่ายยกมา
-  const openingPurchase = Number(companySettings?.openingPurchase) || 0; // ยอดซื้อยกมา
-  const setOpeningRevenue = (v) => setCompanySettings((prev) => ({ ...prev, openingRevenue: Number(v) || 0 }));
-  const setOpeningCost = (v) => setCompanySettings((prev) => ({ ...prev, openingCost: Number(v) || 0 }));
-  const setOpeningMonth = (v) => setCompanySettings((prev) => ({ ...prev, openingMonth: v }));
-  const setOpeningProfit = (v) => setCompanySettings((prev) => ({ ...prev, openingProfit: Number(v) || 0 }));
-  const setLandDebtReport = (v) => setCompanySettings((prev) => ({ ...prev, landDebt: Number(v) || 0 }));
-  const setOpeningExpense = (v) => setCompanySettings((prev) => ({ ...prev, openingExpense: Number(v) || 0 }));
-  const setOpeningPurchase = (v) => setCompanySettings((prev) => ({ ...prev, openingPurchase: Number(v) || 0 }));
+
+  // ใช้ local draft state สำหรับยอดยกมา เพื่อป้องกัน Supabase sync overwrite ขณะพิมพ์
+  const [openingRevenue, setOpeningRevenueLocal] = useState(() => Number(companySettings?.openingRevenue) || 0);
+  const [openingCost, setOpeningCostLocal] = useState(() => Number(companySettings?.openingCost) || 0);
+  const [openingMonth, setOpeningMonthLocal] = useState(() => companySettings?.openingMonth || "");
+  const [openingProfit, setOpeningProfitLocal] = useState(() => Number(companySettings?.openingProfit) || 0);
+  const [landDebtReport, setLandDebtLocal] = useState(() => Number(companySettings?.landDebt) || 0);
+  const [openingExpense, setOpeningExpenseLocal] = useState(() => Number(companySettings?.openingExpense) || 0);
+  const [openingPurchase, setOpeningPurchaseLocal] = useState(() => Number(companySettings?.openingPurchase) || 0);
+
+  // sync จาก companySettings เมื่อโหลดครั้งแรกเท่านั้น
+  const didInitOpeningRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!didInitOpeningRef.current && companySettings && Object.keys(companySettings).length > 0) {
+      setOpeningRevenueLocal(Number(companySettings.openingRevenue) || 0);
+      setOpeningCostLocal(Number(companySettings.openingCost) || 0);
+      setOpeningMonthLocal(companySettings.openingMonth || "");
+      setOpeningProfitLocal(Number(companySettings.openingProfit) || 0);
+      setLandDebtLocal(Number(companySettings.landDebt) || 0);
+      setOpeningExpenseLocal(Number(companySettings.openingExpense) || 0);
+      setOpeningPurchaseLocal(Number(companySettings.openingPurchase) || 0);
+      didInitOpeningRef.current = true;
+    }
+  }, [companySettings]);
+
+  // setters — อัปเดต local state + commit ไปที่ companySettings
+  const setOpeningRevenue = (v) => { setOpeningRevenueLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingRevenue: Number(v) || 0 })); };
+  const setOpeningCost = (v) => { setOpeningCostLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingCost: Number(v) || 0 })); };
+  const setOpeningMonth = (v) => { setOpeningMonthLocal(v); setCompanySettings(prev => ({ ...prev, openingMonth: v })); };
+  const setOpeningProfit = (v) => { setOpeningProfitLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingProfit: Number(v) || 0 })); };
+  const setLandDebtReport = (v) => { setLandDebtLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, landDebt: Number(v) || 0 })); };
+  const setOpeningExpense = (v) => { setOpeningExpenseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingExpense: Number(v) || 0 })); };
+  const setOpeningPurchase = (v) => { setOpeningPurchaseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingPurchase: Number(v) || 0 })); };
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const yearOptions = [];
