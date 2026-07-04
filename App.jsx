@@ -11085,11 +11085,15 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
   const openingMonth = companySettings?.openingMonth || "";
   const openingProfit = Number(companySettings?.openingProfit) || 0; // กำไร/ขาดทุนยกมา
   const landDebtReport = Number(companySettings?.landDebt) || 0;     // มูลค่าลงทุนที่ดิน
+  const openingExpense = Number(companySettings?.openingExpense) || 0; // ค่าใช้จ่ายยกมา
+  const openingPurchase = Number(companySettings?.openingPurchase) || 0; // ยอดซื้อยกมา
   const setOpeningRevenue = (v) => setCompanySettings((prev) => ({ ...prev, openingRevenue: Number(v) || 0 }));
   const setOpeningCost = (v) => setCompanySettings((prev) => ({ ...prev, openingCost: Number(v) || 0 }));
   const setOpeningMonth = (v) => setCompanySettings((prev) => ({ ...prev, openingMonth: v }));
   const setOpeningProfit = (v) => setCompanySettings((prev) => ({ ...prev, openingProfit: Number(v) || 0 }));
   const setLandDebtReport = (v) => setCompanySettings((prev) => ({ ...prev, landDebt: Number(v) || 0 }));
+  const setOpeningExpense = (v) => setCompanySettings((prev) => ({ ...prev, openingExpense: Number(v) || 0 }));
+  const setOpeningPurchase = (v) => setCompanySettings((prev) => ({ ...prev, openingPurchase: Number(v) || 0 }));
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const yearOptions = [];
@@ -11186,7 +11190,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     });
   }, [year, sales, expenses, expenseCategories, movements]);
   const yearlyNetProfitTotal = yearlyMonths.reduce((s, m) => s + m.netProfit, 0);
-  const yearlyNetProfitFinal = yearlyNetProfitTotal + openingProfit - landDebtReport; // รวมยกมาและที่ดิน
+  const yearlyNetProfitFinal = yearlyNetProfitTotal + openingProfit - landDebtReport - openingExpense;
 
   // ===== บันทึกจ่ายเงินปันผล (รายปี) =====
   const dividendPaymentsThisYear = (dividendPayments || []).filter((d) => (d.date || "").startsWith(String(year)));
@@ -11413,7 +11417,8 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         const endInvY = stockValueBefore(new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10));
         const purchInRY = movements.filter(mv => mv.type === "in" && !mv.isOpening && inR(mv.date))
           .reduce((s, mv) => s + (Number(mv.qty) || 0) * (Number(mv.price) || 0), 0);
-        const availableY = beginInvY + purchInRY;
+        const purchInRYTotal = purchInRY + openingPurchase; // รวมซื้อยกมา
+        const availableY = beginInvY + purchInRYTotal;
         const costY = availableY - endInvY;
 
         const expensesInRY = expenses.filter(e => inR(e.billDate || e.date));
@@ -11430,8 +11435,9 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         // รวมยอดยกมา
         const totalIncomeY = totalRevY + openingRevenue;
         const totalCostY = costY + openingCost;
+        const totalExpWithOpening = totalExpY + openingExpense;
         const grossProfitY = totalIncomeY - totalCostY;
-        const netProfitY = grossProfitY - totalExpY;
+        const netProfitY = grossProfitY - totalExpWithOpening;
         const netProfitFinalY = netProfitY + openingProfit - landDebtReport;
         const profitMarginY = totalIncomeY > 0 ? (netProfitY / totalIncomeY) * 100 : 0;
 
@@ -11454,7 +11460,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 20 }}>
             {[
               { label: "รวมรายได้", value: `฿${fmt(totalIncomeY)}`, color: "#185fa5", bg: "#e6f1fb" },
-              { label: "ต้นทุนขาย + ค่าใช้จ่าย", value: `฿${fmt(totalCostY + totalExpY)}`, color: "#1A5C2A", bg: "#E8F5EC" },
+              { label: "ต้นทุนขาย + ค่าใช้จ่าย", value: `฿${fmt(totalCostY + totalExpWithOpening)}`, color: "#1A5C2A", bg: "#E8F5EC" },
               { label: "กำไรสุทธิ", value: `฿${fmt(netProfitY)}`, color: netProfitY >= 0 ? "#185fa5" : "#991b1b", bg: netProfitY >= 0 ? "#e6f1fb" : "#fff1f2" },
               { label: "กำไรสุทธิรวมยกมา", value: netProfitFinalY < 0 ? `(฿${fmt(Math.abs(netProfitFinalY))})` : `฿${fmt(netProfitFinalY)}`, color: netProfitFinalY >= 0 ? "#166534" : "#991b1b", bg: netProfitFinalY >= 0 ? "#f0fdf4" : "#fff1f2", bold: true },
               { label: "อัตรากำไรสุทธิ", value: `${profitMarginY.toFixed(1)}%`, color: profitMarginY >= 0 ? "#6d28d9" : "#991b1b", bg: "#f5f3ff" },
@@ -11470,14 +11476,12 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
           <div id="yearly-pl-content" style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "24px 28px" }}>
             <h3 style={{ margin: "0 0 20px", fontSize: 17, fontWeight: 700 }}>งบกำไรขาดทุน — ปี {year}</h3>
 
-            <Row label="รายได้จากการขาย" value={`฿${fmt(totalRevY)}`} />
-            {openingRevenue > 0 && <Row label="รายได้ยกมา" value={`+฿${fmt(openingRevenue)}`} color="#1A5C2A" indent />}
+            <Row label="รายได้จากการขาย" value={`฿${fmt(totalIncomeY)}`} />
             <Row label="รวมรายได้" value={`฿${fmt(totalIncomeY)}`} bold color="#111827" />
 
             <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>ต้นทุนขาย:</div>
             <Row label="สินค้าคงเหลือยกมาต้นงวด" value={`฿${fmt(beginInvY)}`} indent />
-            {openingCost > 0 && <Row label="ต้นทุนยกมา" value={`+฿${fmt(openingCost)}`} color="#1A5C2A" indent />}
-            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRY)}`} indent />
+            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRYTotal + openingCost)}`} indent />
             <Row label="สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(availableY + openingCost)}`} indent />
             <Row label="หัก สินค้าคงเหลือปลายงวด" value={`-฿${fmt(endInvY)}`} indent />
             <Row label="ต้นทุนขาย" value={`฿${fmt(totalCostY)}`} bold color="#111827" />
@@ -11487,8 +11491,8 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
             </div>
 
             <div style={{ marginTop: 8, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>หัก ค่าใช้จ่าย:</div>
-            {byCategoryY.map((c, i) => <Row key={i} label={c.category} value={`-฿${fmt(c.amount)}`} indent />)}
-            <Row label="รวมค่าใช้จ่าย" value={`-฿${fmt(totalExpY)}`} bold color="#111827" />
+            <Row label="ค่าใช้จ่าย" value={`-฿${fmt(totalExpWithOpening)}`} indent />
+            <Row label="รวมค่าใช้จ่าย" value={`-฿${fmt(totalExpWithOpening)}`} bold color="#111827" />
 
             <div style={{ marginTop: 16 }}>
               <Row label="กำไรสุทธิ (Net Profit)" value={netProfitY < 0 ? `฿${fmt(netProfitY)}` : `฿${fmt(netProfitY)}`} bold color={netProfitY >= 0 ? "#185fa5" : "#991b1b"} />
@@ -11514,6 +11518,8 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
                 { label: "เดือนที่มีผล (ยอดยกมา)", type: "month", value: openingMonth, setter: setOpeningMonth },
                 { label: "รายได้ยกมา (บาท)", value: openingRevenue || "", setter: setOpeningRevenue },
                 { label: "ต้นทุนยกมา (บาท)", value: openingCost || "", setter: setOpeningCost },
+                { label: "ยอดซื้อยกมา (บาท)", value: openingPurchase || "", setter: setOpeningPurchase },
+                { label: "ค่าใช้จ่ายยกมา (บาท)", value: openingExpense || "", setter: setOpeningExpense },
                 { label: "กำไร/ขาดทุนยกมา (บาท)", value: openingProfit || "", setter: setOpeningProfit, hint: "บวก=กำไร ลบ=ขาดทุน" },
                 { label: "มูลค่าลงทุนที่ดิน — หักออก (บาท)", value: landDebtReport || "", setter: setLandDebtReport },
               ].map((f, i) => (
@@ -11551,6 +11557,14 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
           <div>
             <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ต้นทุนยกมา (บาท)</label>
             <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost || ""} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ยอดซื้อยกมา (บาท)</label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingPurchase || ""} onChange={(e) => setOpeningPurchase(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ค่าใช้จ่ายยกมา (บาท)</label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingExpense || ""} onChange={(e) => setOpeningExpense(e.target.value)} placeholder="0" />
           </div>
           <div>
             <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>กำไร/ขาดทุนยกมา (บาท) <span style={{ fontSize: 10, color: "#6b7280" }}>บวก=กำไร ลบ=ขาดทุน</span></label>
