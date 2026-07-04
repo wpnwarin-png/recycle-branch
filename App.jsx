@@ -11438,7 +11438,6 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         const purchInRYTotal = purchInRY + openingPurchase; // รวมซื้อยกมา (ไม่รวมต้นทุนยกมา)
         const availableY = beginInvY + purchInRYTotal;
         const costY = (availableY - endInvY) + openingCost; // ต้นทุนขาย + ต้นทุนยกมา
-        const costY = availableY - endInvY;
 
         const expensesInRY = expenses.filter(e => inR(e.billDate || e.date));
         const groupsY = {};
