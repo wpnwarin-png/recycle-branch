@@ -257,6 +257,27 @@ function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
 
   // เก็บเฉพาะ tables ที่ไม่อยู่ใน data-share-skip
   const tables = Array.from(el.querySelectorAll("table")).filter(t => !t.closest("[data-share-skip]"));
+  // เพิ่ม summary card ด้านบน — ดึงจากแถว tfoot ของ table แรก
+  if (tables.length > 0) {
+    const firstTfoot = tables[tables.length - 1].querySelector("tfoot tr");
+    if (firstTfoot) {
+      const cells = firstTfoot.querySelectorAll("td");
+      if (cells.length >= 2) {
+        // หายอดรวมมูลค่า (คอลัมน์ที่ 2 ถ้ามี 3+ คอลัมน์)
+        const valueCell = cells.length >= 3 ? cells[1] : cells[cells.length - 1];
+        const totalValue = valueCell.textContent.trim();
+        const summaryCard = document.createElement("div");
+        summaryCard.style.cssText = "background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:4px;";
+        summaryCard.innerHTML = `
+          <div style="font-size:13px;color:#6b7280;margin-bottom:6px;">มูลค่ารวมทั้งหมด</div>
+          <div style="font-size:32px;font-weight:900;color:${themeColor};line-height:1;">${totalValue}</div>
+          <div style="font-size:12px;color:#9ca3af;margin-top:4px;">บาท</div>
+        `;
+        body.appendChild(summaryCard);
+      }
+    }
+  }
+
   tables.forEach(tbl => {
     const card = document.createElement("div");
     card.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
@@ -267,10 +288,10 @@ function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
     tbl.querySelectorAll("thead tr").forEach(row => {
       const thead = document.createElement("thead");
       const tr = document.createElement("tr");
-      tr.style.cssText = "background:#eef0f4;";
+      tr.style.cssText = `background:${themeColor}22;border-bottom:2px solid ${themeColor};`;
       row.querySelectorAll("th").forEach(th => {
         const ntd = document.createElement("th");
-        ntd.style.cssText = `padding:9px 14px;font-size:14px;font-weight:700;color:#333;text-align:${th.style.textAlign || "left"};`;
+        ntd.style.cssText = `padding:9px 14px;font-size:14px;font-weight:700;color:${themeColor};text-align:${th.style.textAlign || "left"};`;
         ntd.textContent = th.textContent.trim();
         tr.appendChild(ntd);
       });
