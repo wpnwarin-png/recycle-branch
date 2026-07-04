@@ -11247,6 +11247,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
         {[
           { key: "monthly", label: "รายเดือน" },
           { key: "yearly", label: "สรุปรายปี" },
+          { key: "yearlyPL", label: "งบกำไรขาดทุนรายปี" },
         ].map((opt) => (
           <button key={opt.key} onClick={() => setReportView(opt.key)}
             style={{ padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid",
@@ -11396,26 +11397,190 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
       </>
       )}
 
+      {reportView === "yearlyPL" && (() => {
+        // คำนวณงบกำไรขาดทุนทั้งปี (เหมือนรายเดือนแต่ครอบทั้งปี)
+        const sd = `${year}-01-01`;
+        const ed = `${year}-12-31`;
+        const inR = (d) => d >= sd && d <= ed;
+
+        const salesInR = sales.filter(s => inR(s.date));
+        const totalRevY = salesInR.reduce((sum, inv) => {
+          const sub = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
+          return sum + sub - (inv.discount || 0);
+        }, 0);
+
+        const beginInvY = stockValueBefore(sd);
+        const endInvY = stockValueBefore(new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10));
+        const purchInRY = movements.filter(mv => mv.type === "in" && !mv.isOpening && inR(mv.date))
+          .reduce((s, mv) => s + (Number(mv.qty) || 0) * (Number(mv.price) || 0), 0);
+        const availableY = beginInvY + purchInRY;
+        const costY = availableY - endInvY;
+
+        const expensesInRY = expenses.filter(e => inR(e.billDate || e.date));
+        const groupsY = {};
+        expensesInRY.forEach(e => {
+          const items = (e.items && e.items.length > 0) ? e.items : [{ mainCategory: e.mainCategory || e.category || "ไม่ระบุ", amount: e.amount }];
+          items.filter(it => it.mainCategory === "ค่าใช้จ่าย").forEach(it => {
+            groupsY["ค่าใช้จ่าย"] = (groupsY["ค่าใช้จ่าย"] || 0) + (Number(it.amount) || 0);
+          });
+        });
+        const byCategoryY = Object.entries(groupsY).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+        const totalExpY = byCategoryY.reduce((s, c) => s + c.amount, 0);
+
+        // รวมยอดยกมา
+        const totalIncomeY = totalRevY + openingRevenue;
+        const totalCostY = costY + openingCost;
+        const grossProfitY = totalIncomeY - totalCostY;
+        const netProfitY = grossProfitY - totalExpY;
+        const netProfitFinalY = netProfitY + openingProfit - landDebtReport;
+        const profitMarginY = totalIncomeY > 0 ? (netProfitY / totalIncomeY) * 100 : 0;
+
+        const Row = ({ label, value, bold, color, indent }) => (
+          <div style={{ display: "flex", justifyContent: "space-between", padding: `${bold ? 10 : 7}px ${indent ? "32px" : "0"} ${bold ? 10 : 7}px 0`, borderBottom: bold ? "2px solid #e5e7eb" : "1px solid #f3f4f6" }}>
+            <span style={{ fontSize: bold ? 16 : 15, fontWeight: bold ? 700 : 400, color: color || "#374151" }}>{label}</span>
+            <span style={{ fontSize: bold ? 16 : 15, fontWeight: bold ? 700 : 600, color: color || "#374151" }}>{value}</span>
+          </div>
+        );
+
+        return (
+          <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <select style={{ ...inputStyle, width: 100 }} value={year} onChange={e => setYear(Number(e.target.value))}>
+              {yearOptions.map(y => <option key={y} value={y}>ปี {y}</option>)}
+            </select>
+          </div>
+
+          {/* summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 20 }}>
+            {[
+              { label: "รวมรายได้", value: `฿${fmt(totalIncomeY)}`, color: "#185fa5", bg: "#e6f1fb" },
+              { label: "ต้นทุนขาย + ค่าใช้จ่าย", value: `฿${fmt(totalCostY + totalExpY)}`, color: "#1A5C2A", bg: "#E8F5EC" },
+              { label: "กำไรสุทธิ", value: `฿${fmt(netProfitY)}`, color: netProfitY >= 0 ? "#185fa5" : "#991b1b", bg: netProfitY >= 0 ? "#e6f1fb" : "#fff1f2" },
+              { label: "กำไรสุทธิรวมยกมา", value: netProfitFinalY < 0 ? `(฿${fmt(Math.abs(netProfitFinalY))})` : `฿${fmt(netProfitFinalY)}`, color: netProfitFinalY >= 0 ? "#166534" : "#991b1b", bg: netProfitFinalY >= 0 ? "#f0fdf4" : "#fff1f2", bold: true },
+              { label: "อัตรากำไรสุทธิ", value: `${profitMarginY.toFixed(1)}%`, color: profitMarginY >= 0 ? "#6d28d9" : "#991b1b", bg: "#f5f3ff" },
+            ].map((c, i) => (
+              <div key={i} style={{ background: c.bg, borderRadius: 12, padding: "14px 16px", border: c.bold ? "2px solid #86efac" : "none" }}>
+                <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label}</div>
+                <div style={{ fontWeight: c.bold ? 800 : 700, fontSize: c.bold ? 20 : 18, color: c.color }}>{c.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* งบกำไรขาดทุน */}
+          <div id="yearly-pl-content" style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "24px 28px" }}>
+            <h3 style={{ margin: "0 0 20px", fontSize: 17, fontWeight: 700 }}>งบกำไรขาดทุน — ปี {year}</h3>
+
+            <Row label="รายได้จากการขาย" value={`฿${fmt(totalRevY)}`} />
+            {openingRevenue > 0 && <Row label="รายได้ยกมา" value={`+฿${fmt(openingRevenue)}`} color="#1A5C2A" indent />}
+            <Row label="รวมรายได้" value={`฿${fmt(totalIncomeY)}`} bold color="#111827" />
+
+            <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>ต้นทุนขาย:</div>
+            <Row label="สินค้าคงเหลือยกมาต้นงวด" value={`฿${fmt(beginInvY)}`} indent />
+            {openingCost > 0 && <Row label="ต้นทุนยกมา" value={`+฿${fmt(openingCost)}`} color="#1A5C2A" indent />}
+            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRY)}`} indent />
+            <Row label="สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(availableY + openingCost)}`} indent />
+            <Row label="หัก สินค้าคงเหลือปลายงวด" value={`-฿${fmt(endInvY)}`} indent />
+            <Row label="ต้นทุนขาย" value={`฿${fmt(totalCostY)}`} bold color="#111827" />
+
+            <div style={{ marginTop: 16, marginBottom: 8 }}>
+              <Row label="กำไรขั้นต้น (Gross Profit)" value={`฿${fmt(grossProfitY)}`} bold color={grossProfitY >= 0 ? "#185fa5" : "#991b1b"} />
+            </div>
+
+            <div style={{ marginTop: 8, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>หัก ค่าใช้จ่าย:</div>
+            {byCategoryY.map((c, i) => <Row key={i} label={c.category} value={`-฿${fmt(c.amount)}`} indent />)}
+            <Row label="รวมค่าใช้จ่าย" value={`-฿${fmt(totalExpY)}`} bold color="#111827" />
+
+            <div style={{ marginTop: 16 }}>
+              <Row label="กำไรสุทธิ (Net Profit)" value={netProfitY < 0 ? `฿${fmt(netProfitY)}` : `฿${fmt(netProfitY)}`} bold color={netProfitY >= 0 ? "#185fa5" : "#991b1b"} />
+            </div>
+
+            {(openingProfit !== 0 || landDebtReport !== 0) && (
+              <>
+                <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>รายการพิเศษ / ยกมา:</div>
+                {openingProfit !== 0 && <Row label="กำไร/ขาดทุนยกมา" value={`${openingProfit >= 0 ? "+" : ""}฿${fmt(openingProfit)}`} color={openingProfit >= 0 ? "#166534" : "#991b1b"} indent />}
+                {landDebtReport !== 0 && <Row label="มูลค่าลงทุนที่ดิน (หักออก)" value={`-฿${fmt(landDebtReport)}`} color="#991b1b" indent />}
+                <div style={{ marginTop: 8 }}>
+                  <Row label="กำไร/ขาดทุนสุทธิ (รวมยกมา)" value={netProfitFinalY < 0 ? `(฿${fmt(Math.abs(netProfitFinalY))})` : `฿${fmt(netProfitFinalY)}`} bold color={netProfitFinalY >= 0 ? "#166534" : "#991b1b"} />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ช่องกรอกยอดยกมา */}
+          <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginTop: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px 16px" }}>
+              {[
+                { label: "เดือนที่มีผล (ยอดยกมา)", type: "month", value: openingMonth, setter: setOpeningMonth },
+                { label: "รายได้ยกมา (บาท)", value: openingRevenue || "", setter: setOpeningRevenue },
+                { label: "ต้นทุนยกมา (บาท)", value: openingCost || "", setter: setOpeningCost },
+                { label: "กำไร/ขาดทุนยกมา (บาท)", value: openingProfit || "", setter: setOpeningProfit, hint: "บวก=กำไร ลบ=ขาดทุน" },
+                { label: "มูลค่าลงทุนที่ดิน — หักออก (บาท)", value: landDebtReport || "", setter: setLandDebtReport },
+              ].map((f, i) => (
+                <div key={i}>
+                  <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>{f.label} {f.hint && <span style={{ fontSize: 10, color: "#6b7280" }}>({f.hint})</span>}</label>
+                  <input type={f.type || "number"} style={{ ...inputStyle, textAlign: f.type === "month" ? "left" : "right" }} value={f.value} onChange={e => f.setter(e.target.value)} placeholder="0" />
+                </div>
+              ))}
+            </div>
+          </div>
+          </>
+        );
+      })()}
+
       {reportView === "yearly" && (
       <>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <select style={{ ...inputStyle, width: 100 }} value={year} onChange={(e) => setYear(Number(e.target.value))}>
           {yearOptions.map((y) => <option key={y} value={y}>ปี {y}</option>)}
         </select>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
-        <div style={{ background: yearlyNetProfitTotal >= 0 ? "#e6f1fb" : "#E8F5EC", borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontSize: 12, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#1A5C2A", marginBottom: 4 }}>กำไรสุทธิรวมทั้งปี {year}</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#1A5C2A" }}>฿{fmt(yearlyNetProfitTotal)}</div>
+      {/* ยอดยกมา / รายการพิเศษ — แสดงด้านบนสุด */}
+      <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ (กรอกเองบันทึกอัตโนมัติ)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px 16px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล (ยอดยกมา)</label>
+            <input type="month" style={inputStyle} value={openingMonth} onChange={(e) => setOpeningMonth(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>รายได้ยกมา (บาท)</label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue || ""} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>ต้นทุนยกมา (บาท)</label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost || ""} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>กำไร/ขาดทุนยกมา (บาท) <span style={{ fontSize: 10, color: "#6b7280" }}>บวก=กำไร ลบ=ขาดทุน</span></label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingProfit || ""} onChange={(e) => setOpeningProfit(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>มูลค่าลงทุนที่ดิน — หักออก (บาท)</label>
+            <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={landDebtReport || ""} onChange={(e) => setLandDebtReport(e.target.value)} placeholder="0" />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
+        <div style={{ background: yearlyNetProfitTotal >= 0 ? "#e6f1fb" : "#fff1f2", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไรสุทธิในระบบ ปี {year}</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#991b1b" }}>฿{fmt(yearlyNetProfitTotal)}</div>
+        </div>
+        <div style={{ background: yearlyNetProfitFinal >= 0 ? "#f0fdf4" : "#fff1f2", borderRadius: 12, padding: "16px 18px", border: `2px solid ${yearlyNetProfitFinal >= 0 ? "#86efac" : "#fca5a5"}` }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไร/ขาดทุนสุทธิรวมยกมา</div>
+          <div style={{ fontWeight: 800, fontSize: 20, color: yearlyNetProfitFinal >= 0 ? "#166534" : "#991b1b" }}>
+            {yearlyNetProfitFinal < 0 ? `(฿${fmt(Math.abs(yearlyNetProfitFinal))})` : `฿${fmt(yearlyNetProfitFinal)}`}
+          </div>
         </div>
         <div style={{ background: "#eeedfe", borderRadius: 12, padding: "16px 18px" }}>
           <div style={{ fontSize: 12, color: "#3c3489", marginBottom: 4 }}>จ่ายเงินปันผลไปแล้วในปีนี้</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: "#3c3489" }}>฿{fmt(totalDividendPaidThisYear)}</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: "#3c3489" }}>฿{fmt(totalDividendPaidThisYear)}</div>
         </div>
-        <div style={{ background: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#e3f5ea" : "#E8F5EC", borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontSize: 12, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1A5C2A" : "#1A5C2A", marginBottom: 4 }}>กำไร - เงินปันผล</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1A5C2A" : "#1A5C2A" }}>฿{fmt(yearlyNetProfitTotal - totalDividendPaidThisYear)}</div>
+        <div style={{ background: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#e3f5ea" : "#fff1f2", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไร - เงินปันผล</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1A5C2A" : "#991b1b" }}>฿{fmt(yearlyNetProfitTotal - totalDividendPaidThisYear)}</div>
         </div>
       </div>
 
