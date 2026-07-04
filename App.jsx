@@ -2495,7 +2495,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     { key: "stock", label: "สต็อก", icon: Boxes },
     { key: "loans", label: "สินเชื่อ", icon: CreditCard },
     { key: "cashflow", label: "เงินหมุนร้าน", icon: Landmark },
-    { key: "pnl", label: "กำไร/ขาดทุน", icon: TrendingUp },
   ];
 
   const renderCard = (c, snapshot) => {
@@ -11084,9 +11083,13 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
   const openingRevenue = Number(companySettings?.openingRevenue) || 0;
   const openingCost = Number(companySettings?.openingCost) || 0;
   const openingMonth = companySettings?.openingMonth || "";
+  const openingProfit = Number(companySettings?.openingProfit) || 0; // กำไร/ขาดทุนยกมา
+  const landDebtReport = Number(companySettings?.landDebt) || 0;     // มูลค่าลงทุนที่ดิน
   const setOpeningRevenue = (v) => setCompanySettings((prev) => ({ ...prev, openingRevenue: Number(v) || 0 }));
   const setOpeningCost = (v) => setCompanySettings((prev) => ({ ...prev, openingCost: Number(v) || 0 }));
   const setOpeningMonth = (v) => setCompanySettings((prev) => ({ ...prev, openingMonth: v }));
+  const setOpeningProfit = (v) => setCompanySettings((prev) => ({ ...prev, openingProfit: Number(v) || 0 }));
+  const setLandDebtReport = (v) => setCompanySettings((prev) => ({ ...prev, landDebt: Number(v) || 0 }));
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const yearOptions = [];
@@ -11183,6 +11186,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     });
   }, [year, sales, expenses, expenseCategories, movements]);
   const yearlyNetProfitTotal = yearlyMonths.reduce((s, m) => s + m.netProfit, 0);
+  const yearlyNetProfitFinal = yearlyNetProfitTotal + openingProfit - landDebtReport; // รวมยกมาและที่ดิน
 
   // ===== บันทึกจ่ายเงินปันผล (รายปี) =====
   const dividendPaymentsThisYear = (dividendPayments || []).filter((d) => (d.date || "").startsWith(String(year)));
@@ -11495,22 +11499,45 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
         {/* ยอดยกมาก่อนเริ่มใช้แอพ */}
         <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginTop: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, color: "#1A5C2A", marginBottom: 12 }}>ยอดยกมาก่อนเริ่มใช้แอพ (ถ้ามี)</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 16px" }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "#1A5C2A", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px 16px" }}>
             <div>
-              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล</label>
+              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล (ยอดยกมา)</label>
               <input type="month" style={inputStyle} value={openingMonth} onChange={(e) => setOpeningMonth(e.target.value)} />
             </div>
             <div>
               <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>รายได้ยกมา (บาท)</label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue || ""} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
             </div>
             <div>
               <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>ต้นทุนยกมา (บาท)</label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost || ""} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>กำไร/ขาดทุนยกมา (บาท) <span style={{ fontSize: 11, color: "#6b7280" }}>บวก=กำไรยกมา, ลบ=ขาดทุนยกมา</span></label>
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingProfit || ""} onChange={(e) => setOpeningProfit(e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>มูลค่าลงทุนที่ดิน — หักออก (บาท)</label>
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={landDebtReport || ""} onChange={(e) => setLandDebtReport(e.target.value)} placeholder="0" />
             </div>
           </div>
-          <p style={{ fontSize: 12, color: "#1A5C2A", margin: "8px 0 0" }}>* ยอดยกมาจะรวมเข้างบเฉพาะเดือนที่กำหนด — ถ้าไม่กำหนดเดือนจะรวมทุกเดือน — บันทึกถาวรอัตโนมัติ ใช้ได้ทุกเครื่อง</p>
+          <p style={{ fontSize: 12, color: "#1A5C2A", margin: "8px 0 0" }}>* บันทึกถาวรอัตโนมัติ ใช้ได้ทุกเครื่อง</p>
+
+          {/* สรุปกำไรสุทธิรายปีรวมยกมา */}
+          {(openingProfit !== 0 || landDebtReport !== 0) && (
+            <div style={{ marginTop: 16, padding: "12px 16px", background: yearlyNetProfitFinal >= 0 ? "#f0fdf4" : "#fff1f2", borderRadius: 8, border: `1px solid ${yearlyNetProfitFinal >= 0 ? "#86efac" : "#fca5a5"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>กำไร/ขาดทุนสุทธิรายปี (รวมยกมา)</div>
+                  <div style={{ fontSize: 11, color: "#6b7280" }}>กำไรในระบบ {fmt(yearlyNetProfitTotal)} + ยกมา {fmt(openingProfit)} − ที่ดิน {fmt(landDebtReport)}</div>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: yearlyNetProfitFinal >= 0 ? "#166534" : "#991b1b" }}>
+                  {yearlyNetProfitFinal < 0 ? `(฿${fmt(Math.abs(yearlyNetProfitFinal))})` : `฿${fmt(yearlyNetProfitFinal)}`}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {divPayForm && (
