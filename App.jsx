@@ -251,11 +251,13 @@ function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
   header.appendChild(titleEl);
   container.appendChild(header);
 
-  // body: ดึง tables จาก element มา render ใหม่
+  // body: ดึง tables จาก element มา render ใหม่ (ข้าม element ที่มี data-share-skip)
   const body = document.createElement("div");
   body.style.cssText = "padding:12px;display:flex;flex-direction:column;gap:12px;";
 
-  el.querySelectorAll("table").forEach(tbl => {
+  // เก็บเฉพาะ tables ที่ไม่อยู่ใน data-share-skip
+  const tables = Array.from(el.querySelectorAll("table")).filter(t => !t.closest("[data-share-skip]"));
+  tables.forEach(tbl => {
     const card = document.createElement("div");
     card.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
 
@@ -316,7 +318,7 @@ function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
   });
 
   // ถ้าไม่มี table ให้ใช้ text แบบ list
-  if (el.querySelectorAll("table").length === 0) {
+  if (tables.length === 0) {
     const rows = el.querySelectorAll("[style*='display: flex'], [style*='display:flex']");
     const listDiv = document.createElement("div");
     listDiv.style.cssText = "background:#fff;border-radius:8px;padding:12px 16px;";
@@ -3162,7 +3164,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
           <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflowX: "auto" }}>
             {/* hidden divs สำหรับ capture รูปแชร์ LINE — วางนอก table เพื่อไม่ถูกตัดความกว้าง */}
-            <div style={{ position: "absolute", left: -9999, top: 0, width: 480 }}>
+            <div data-share-skip="true" style={{ position: "absolute", left: -9999, top: 0, width: 480 }}>
               {stockByType.map((g) => {
                 const visibleItems = g.items.filter((s) => s.qty > 0);
                 if (visibleItems.length === 0) return null;
