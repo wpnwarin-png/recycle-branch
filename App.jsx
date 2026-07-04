@@ -6322,34 +6322,51 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         return s + Math.floor(rowSum); // ปัดเป็นเต็มบาทต่อบิล
       }, 0);
 
+    // ฝั่งซ้าย: ยอดที่เกิดขึ้นจริงวันนี้ — ไม่สนใจว่าเบิกแล้วหรือยัง
     const dayCost = sumActualPayments(
       allPurchaseRows,
       "fromStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
+      r => true,
       p => p.date === creditDate
     );
     const dayExp  = sumActualPayments(
       allExpenseRows,
       "fromStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
+      r => true,
       p => p.date === creditDate
     );
     const dayRev  = sumActualPayments(
       allSaleRows,
       "toStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
+      r => true,
       p => p.date === creditDate
     );
     const dayNet  = dayCost + dayExp - dayRev;
 
-    const pendingBefore =
-      sumActualPayments(allPurchaseRows, "fromStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate)
-      + sumActualPayments(allExpenseRows, "fromStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate)
-      - sumActualPayments(allSaleRows, "toStoreBankId", r => !payFlags[`${r.id}_withdrawn`], p => p.date < creditDate);
+    // ยอดค้างเบิก = ทุก payment ที่ยังไม่ติ๊กเบิก (ทุกวัน) - ยอดใช้วันนี้ (เพราะวันนี้นับแยกอยู่แล้ว)
+    const pendingPurchaseAll = sumActualPayments(
+      allPurchaseRows,
+      "fromStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      null  // ทุกวัน
+    );
+    const pendingExpAll = sumActualPayments(
+      allExpenseRows,
+      "fromStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      null
+    );
+    const pendingRevAll = sumActualPayments(
+      allSaleRows,
+      "toStoreBankId",
+      r => !payFlags[`${r.id}_withdrawn`],
+      null
+    );
+    const pendingBefore = (pendingPurchaseAll + pendingExpAll - pendingRevAll) - dayNet;
 
     const manual = Number(creditManual) || 0;
     const rawTotal = dayNet + pendingBefore + manual;
-    const total = Math.floor(rawTotal);
+    const total = rawTotal; // ไม่ปัดเศษ ใช้ยอดจริง
     const dayCostFloor = Math.floor(dayCost);
     const dayExpFloor = Math.floor(dayExp);
     const dayRevFloor = Math.floor(dayRev);
@@ -6612,7 +6629,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNetFloor, color: "#e6f1fb" },
               { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBeforeFloor, color: "#fff" },
               { label: "ยอดตกหล่น", value: null, color: "#e6f1fb", input: true },
-              { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true, rawTotal: creditDaySummary.rawTotal },
+              { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true },
             ].map((row, i) => (
               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 16px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
                 <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
