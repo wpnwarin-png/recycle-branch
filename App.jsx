@@ -399,11 +399,16 @@ async function shareElementToLine(elementId, title = "แชร์", themeColor)
 }
 
 // ปุ่ม LINE ขนาดเล็ก (ใช้ใน ExportToolbar และหัวกล่อง)
-function LineShareButton({ elementId, title = "แชร์", small = false, themeColor }) {
+function LineShareButton({ elementId, title = "แชร์", small = false, themeColor, onClickOverride }) {
   const [loading, setLoading] = React.useState(false);
   return (
     <button
-      onClick={async () => { setLoading(true); await shareElementToLine(elementId, title, themeColor); setLoading(false); }}
+      onClick={async () => {
+        setLoading(true);
+        if (onClickOverride) await onClickOverride();
+        else await shareElementToLine(elementId, title, themeColor);
+        setLoading(false);
+      }}
       disabled={loading}
       title="แชร์ LINE"
       style={{
@@ -6616,7 +6621,74 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
               <Settings size={13} /> ตั้งค่าวงเงิน
             </button>
-            <LineShareButton elementId="credit-day-summary-print" title={`สรุปยอดใช้เงิน ${creditDate}`} small />
+            <LineShareButton elementId="credit-day-summary-print" title={`สรุปยอดใช้เงิน ${creditDate}`} small
+              onClickOverride={async () => {
+                const ok = await loadHtml2Canvas();
+                if (!ok) return;
+                const ds = creditDaySummary;
+                const fmtN = (v) => {
+                  const neg = v < 0;
+                  const s = Math.abs(v).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  return neg ? `(${s})` : s;
+                };
+                const colorN = (v) => v < 0 ? "#c0392b" : v > 0 ? "#1A6B35" : "#374151";
+
+                const c = document.createElement("div");
+                c.style.cssText = "position:fixed;left:-99999px;top:0;width:700px;background:#f5f5f5;font-family:'Noto Sans Thai',Arial,sans-serif;";
+
+                c.innerHTML = `
+                  <div style="background:#4a1e1e;color:#fff;padding:12px 20px;font-size:16px;font-weight:700;">
+                    สรุปยอดใช้เงิน — ${creditDate}
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;background:#fff;border-bottom:2px solid #e5e7eb;">
+                    <div style="border-right:1px solid #e5e7eb;">
+                      <div style="background:#6b1f1f;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;">ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
+                      ${[
+                        { label: "ค่าสินค้า", value: ds.dayCost, bg: "#E8F5EC" },
+                        { label: "ค่าใช้จ่าย", value: ds.dayExp, bg: "#fff" },
+                        { label: "หัก รายได้จากสินค้า", value: -ds.dayRev, bg: "#E8F5EC" },
+                        { label: "รวมยอดใช้วันนี้", value: ds.dayNet, bg: "#e8d4d4", bold: true },
+                      ].map(r => `
+                        <div style="display:flex;justify-content:space-between;padding:9px 16px;background:${r.bg};border-bottom:1px solid #f0eded;">
+                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 400};">${r.label}</span>
+                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 600};color:${colorN(r.value)}">${fmtN(r.value)}</span>
+                        </div>`).join("")}
+                    </div>
+                    <div>
+                      <div style="background:#1a3a5c;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;">ยอดใช้ที่ต้องเบิกคืน</div>
+                      ${[
+                        { label: "ยอดใช้วันนี้", value: ds.dayNetFloor, bg: "#e6f1fb" },
+                        { label: "ยอดค้างเบิก", value: ds.pendingBeforeFloor, bg: "#fff" },
+                        { label: "ยอดตกหล่น", value: ds.manual, bg: "#e6f1fb" },
+                        { label: "ยอดรวมที่ต้องเบิก", value: ds.total, bg: "#d0e4f7", bold: true },
+                      ].map(r => `
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 16px;background:${r.bg};border-bottom:1px solid #f0f4f8;">
+                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 400};">${r.label}</span>
+                          <span style="font-size:${r.bold ? 18 : 14}px;font-weight:${r.bold ? 800 : 600};color:${colorN(r.value)}">${fmtN(r.value)}</span>
+                        </div>`).join("")}
+                    </div>
+                  </div>
+                  ${(returnBankName || returnBankNo) ? `
+                  <div style="background:#fff;padding:14px 20px;border-top:2px solid #e5e7eb;">
+                    <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">โอนคืนวงเงินผ่าน</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">ธนาคาร</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankName || "—"}</div></div>
+                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">เลขที่บัญชี</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankNo || "—"}</div></div>
+                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">ชื่อบัญชี</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankOwner || "—"}</div></div>
+                    </div>
+                    <div style="margin-top:10px;font-size:16px;font-weight:700;color:#185fa5;">ยอดโอนคืน: ฿${fmtN(ds.total)}</div>
+                  </div>` : ""}
+                `;
+
+                document.body.appendChild(c);
+                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                let canvas;
+                try {
+                  canvas = await window.html2canvas(c, { scale: 2, useCORS: true, backgroundColor: "#f5f5f5", width: 700, height: c.scrollHeight, windowWidth: 700 });
+                } finally { document.body.removeChild(c); }
+                if (canvas) await shareCanvas(canvas, `สรุปยอดใช้เงิน ${creditDate}`);
+              }}
+            />
             <button onClick={() => printAsPDF("credit-day-summary-print", `สรุปยอดใช้เงิน ${creditDate}`)}
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
               <Printer size={13} /> พิมพ์
