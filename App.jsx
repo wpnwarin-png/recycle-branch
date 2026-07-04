@@ -2213,7 +2213,19 @@ export default function App() {
 // ===================================================================
 function Dashboard({ products, customers, purchases, sales, inventory, expenses, loans, storeBankAccounts, deposits, bankTransfers, expenseCategories, prepayments }) {
   // ---------- หมวดหมู่แดชบอร์ด ----------
-  const [dashSubTab, setDashSubTab] = useState("purchases"); // "purchases" | "sales" | "expenses" | "stock" | "loans"
+  const [dashSubTab, setDashSubTab] = useState("purchases");
+  const [landDebt, setLandDebtState] = useState(() => { try { return Number(localStorage.getItem("pnl_landDebt") || "0"); } catch { return 0; } });
+  const setLandDebt = (v) => { const n = Number(v) || 0; setLandDebtState(n); try { localStorage.setItem("pnl_landDebt", String(n)); } catch {} };
+  const [pnlOpenCost, setPnlOpenCostState] = useState(() => { try { return Number(localStorage.getItem("pnl_openCost") || "0"); } catch { return 0; } });
+  const setPnlOpenCost = (v) => { const n = Number(v) || 0; setPnlOpenCostState(n); try { localStorage.setItem("pnl_openCost", String(n)); } catch {} };
+  const [pnlOpenRevenue, setPnlOpenRevenueState] = useState(() => { try { return Number(localStorage.getItem("pnl_openRevenue") || "0"); } catch { return 0; } });
+  const setPnlOpenRevenue = (v) => { const n = Number(v) || 0; setPnlOpenRevenueState(n); try { localStorage.setItem("pnl_openRevenue", String(n)); } catch {} };
+  const [pnlOpenProfit, setPnlOpenProfitState] = useState(() => { try { return Number(localStorage.getItem("pnl_openProfit") || "0"); } catch { return 0; } });
+  const setPnlOpenProfit = (v) => { const n = Number(v) || 0; setPnlOpenProfitState(n); try { localStorage.setItem("pnl_openProfit", String(n)); } catch {} };
+  const [pnlDateFrom, setPnlDateFrom] = useState(() => { try { return localStorage.getItem("pnl_dateFrom") || new Date().getFullYear() + "-01-01"; } catch { return new Date().getFullYear() + "-01-01"; } });
+  const [pnlDateTo, setPnlDateTo] = useState(() => { try { return localStorage.getItem("pnl_dateTo") || new Date().toISOString().slice(0, 10); } catch { return new Date().toISOString().slice(0, 10); } });
+  const setPnlFrom = (v) => { setPnlDateFrom(v); try { localStorage.setItem("pnl_dateFrom", v); } catch {} };
+  const setPnlTo = (v) => { setPnlDateTo(v); try { localStorage.setItem("pnl_dateTo", v); } catch {} };
   const [expandedStockTypes, setExpandedStockTypes] = useState({}); // { [type]: bool } ติ๊กเลือกเพื่อดูรายการสินค้าในประเภทนั้น
   const [selectedStockTypes, setSelectedStockTypes] = useState({}); // { [type]: bool } สำหรับ multi-select LINE share
   const [sharingStockTypes, setSharingStockTypes] = useState(false);
@@ -2468,6 +2480,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     stock:     { header: "#660000", headerText: "#fff", cardBg: "#fdf5f5", border: "#fddcdc" },
     loans:     { header: "#0e7490", headerText: "#fff", cardBg: "#ecfeff", border: "#a5f3fc" },
     cashflow:  { header: "#1e3a5f", headerText: "#fff", cardBg: "#f0f4ff", border: "#c7d7f5" },
+    pnl:       { header: "#065f46", headerText: "#fff", cardBg: "#f0fdf4", border: "#a7f3d0" },
   };
   const theme = DASH_THEME[dashSubTab] || DASH_THEME.cashflow;
 
@@ -2482,6 +2495,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     { key: "stock", label: "สต็อก", icon: Boxes },
     { key: "loans", label: "สินเชื่อ", icon: CreditCard },
     { key: "cashflow", label: "เงินหมุนร้าน", icon: Landmark },
+    { key: "pnl", label: "กำไร/ขาดทุน", icon: TrendingUp },
   ];
 
   const renderCard = (c, snapshot) => {
@@ -3413,25 +3427,49 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         const unsetGroupTotal = unsetGroupRows.reduce((s, b) => s + b.balance, 0);
 
         // 2. ลูกหนี้ค้างรับ (ยอดคงค้าง ณ ปัจจุบันเสมอ — ตรงกับหน้ารับ/จ่ายชำระ)
+        // ลูกหนี้ค้างรับ — สูตรตรงกับ allSaleRows ในหน้ารับชำระ
         const totalReceivable = sales.reduce((s, inv) => {
           const subtotal = inv.items.reduce((ss, it) => ss + (it.net || 0) * (it.price || 0), 0);
           const ad = subtotal - (inv.discount || 0);
-          const total = ad + ad * ((inv.vatRate || 0) / 100);
+          const total = ad + ad * ((Number(inv.vatRate) || 0) / 100);
           const paid = (inv.payments || []).reduce((ss, p) => ss + (Number(p.amount) || 0), 0);
           const remaining = total - paid;
           if (inv.writeOff || remaining <= 0.01) return s;
           return s + remaining;
+        }, 0)
+        // รวมลูกหนี้ยกมา (opening receivable) ที่ยังค้างอยู่
+        + customers.reduce((s, c) => {
+          const amt = Number(c.receivableOpening) || 0;
+          if (amt <= 0) return s;
+          const paid = Number(c.receivableOpeningPaid) || 0;
+          const remaining = amt - paid;
+          return remaining > 0.01 ? s + remaining : s;
         }, 0);
 
-        // 3. เจ้าหนี้ค้างจ่าย (ยอดคงค้าง ณ ปัจจุบัน — ตรงกับหน้ารับ/จ่ายชำระ)
+        // เจ้าหนี้ค้างจ่าย — สูตรตรงกับ allPurchaseRows ในหน้ารับชำระ
         const totalPayable = purchases.filter(po => (po.status || "") !== "ยกเลิก").reduce((s, po) => {
-          const subtotal = po.items.reduce((ss, it) => ss + (it.net || 0) * (it.price || 0), 0);
+          const subtotal = po.items.reduce((ss, it) => {
+            const qty = Number(it.qty) || 0;
+            const deductPct = Number(it.deductPct) || 0;
+            const deductKg = Number(it.deductKg) || 0;
+            const net = it.net != null ? Number(it.net) : qty - (qty * deductPct / 100) - deductKg;
+            const discountPct = Number(it.discountPct) || 0;
+            return ss + net * (Number(it.price) || 0) * (1 - discountPct / 100);
+          }, 0);
           const vat = subtotal * ((Number(po.vatRate) || 0) / 100);
           const total = subtotal + vat;
           const paid = (po.payments || []).reduce((ss, p) => ss + (Number(p.amount) || 0), 0);
           const remaining = total - paid;
           if (po.writeOff || remaining <= 0.01) return s;
           return s + remaining;
+        }, 0)
+        // รวมเจ้าหนี้ยกมา (opening payable) ที่ยังค้างอยู่
+        + customers.reduce((s, c) => {
+          const amt = Number(c.payableOpening) || 0;
+          if (amt <= 0) return s;
+          const paid = Number(c.payableOpeningPaid) || 0;
+          const remaining = amt - paid;
+          return remaining > 0.01 ? s + remaining : s;
         }, 0);
 
         // 4. เงินมัดจำคงเหลือ (ยอดคงค้าง ณ ปัจจุบัน)
@@ -3681,6 +3719,229 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
 
 
+            </div>
+          </>
+        );
+      })()}
+
+      {/* ===== กำไร/ขาดทุน ===== */}
+      {dashSubTab === "pnl" && (() => {
+        // กรองช่วงเวลา
+        const inRange = (d) => (!pnlDateFrom || d >= pnlDateFrom) && (!pnlDateTo || d <= pnlDateTo);
+
+        // ยอดขาย (จากระบบ — ยอดตามบิลที่อนุมัติแล้ว)
+        const totalSaleQty = sales.reduce((s, inv) => s + inv.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
+        const totalSaleQtyRange = sales.filter(inv => inRange(inv.date)).reduce((s, inv) => s + inv.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
+        const totalSaleValue = sales.filter(inv => inRange(inv.date)).reduce((s, inv) => {
+          const sub = inv.items.reduce((ss, it) => ss + (it.net || 0) * (it.price || 0), 0);
+          const ad = sub - (inv.discount || 0);
+          return s + ad + ad * ((Number(inv.vatRate) || 0) / 100);
+        }, 0);
+
+        // ยอดซื้อ (ต้นทุนสินค้าขาย — ใช้ยอดตามบิลที่อนุมัติ)
+        const totalBuyQty = purchases.filter(po => inRange(po.date) && (po.status || "") !== "ยกเลิก").reduce((s, po) => s + po.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
+        const totalBuyValue = purchases.filter(po => inRange(po.date) && (po.status || "") !== "ยกเลิก").reduce((s, po) => {
+          const sub = po.items.reduce((ss, it) => {
+            const qty = Number(it.qty) || 0;
+            const deductPct = Number(it.deductPct) || 0;
+            const deductKg = Number(it.deductKg) || 0;
+            const net = it.net != null ? Number(it.net) : qty - (qty * deductPct / 100) - deductKg;
+            return ss + net * (Number(it.price) || 0) * (1 - (Number(it.discountPct) || 0) / 100);
+          }, 0);
+          return s + sub + sub * ((Number(po.vatRate) || 0) / 100);
+        }, 0);
+
+        // ค่าใช้จ่าย (จากระบบ)
+        const totalExpValue = (expenses || []).filter(e => inRange(e.billDate || e.date)).reduce((s, e) => {
+          const items = e.items || [];
+          return s + items.reduce((ss, it) => {
+            const amt = Number(it.amount) || 0;
+            const vat = it.vatEnabled ? amt * 0.07 : 0;
+            const wht = amt * ((Number(it.whtRate) || 0) / 100);
+            return ss + amt + vat - wht;
+          }, 0);
+        }, 0);
+
+        // กำไร/ขาดทุน
+        const grossProfit = totalSaleValue - totalBuyValue; // กำไรขั้นต้น (ในระบบ)
+        const totalCostAll = totalBuyValue + pnlOpenCost; // ต้นทุนรวม (ในระบบ + ยกมา)
+        const totalRevenueAll = totalSaleValue + pnlOpenRevenue; // รายได้รวม (ในระบบ + ยกมา)
+        const grossProfitAll = totalRevenueAll - totalCostAll; // กำไรขั้นต้นรวม
+        const operatingProfit = grossProfitAll - totalExpValue; // กำไรจากการดำเนินงาน
+        const netProfit = operatingProfit + pnlOpenProfit - landDebt; // กำไร/ขาดทุนสุทธิ
+
+        const pnlColor = (v) => v >= 0 ? "#166534" : "#991b1b";
+        const pnlBg = (v) => v >= 0 ? "#f0fdf4" : "#fff1f2";
+
+        return (
+          <>
+            {/* header + date range */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label style={{ fontSize: 13, color: "#374151" }}>ช่วงเวลา</label>
+                <input type="date" value={pnlDateFrom} onChange={e => setPnlFrom(e.target.value)}
+                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 13 }} />
+                <span style={{ fontSize: 13, color: "#6b7280" }}>ถึง</span>
+                <input type="date" value={pnlDateTo} onChange={e => setPnlTo(e.target.value)}
+                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 13 }} />
+              </div>
+              <ExportToolbar
+                onPDF={() => printAsPDF("dash-pnl", "รายงานกำไรขาดทุน")}
+                onExcel={() => {
+                  const rows = [
+                    ["รายการ", "จำนวน (กก.)", "จำนวนเงิน (บาท)"],
+                    ["ยอดซื้อ", fmt(totalBuyQty), fmt(totalBuyValue)],
+                    ["ยอดขาย", fmt(totalSaleQtyRange), fmt(totalSaleValue)],
+                    ["ค่าใช้จ่าย", "", fmt(totalExpValue)],
+                    ["มูลค่าลงทุนที่ดิน", "", fmt(landDebt)],
+                    [""],
+                    ["กำไรขั้นต้น (ขาย - ซื้อ)", "", fmt(grossProfit)],
+                    ["กำไรจากการดำเนินงาน (ขั้นต้น - ค่าใช้จ่าย)", "", fmt(operatingProfit)],
+                    ["กำไร/ขาดทุนสุทธิ (หักลงทุนที่ดิน)", "", fmt(netProfit)],
+                  ];
+                  exportExcel(rows, "รายงานกำไรขาดทุน.xlsx", "P&L");
+                }}
+                onImage={() => printAsPDF("dash-pnl", "รายงานกำไรขาดทุน")}
+                lineElementId="dash-pnl"
+                lineTitle="รายงานกำไร/ขาดทุน"
+                lineThemeColor="#065f46"
+              />
+            </div>
+
+            <div id="dash-pnl">
+              {/* summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 20 }}>
+                {[
+                  { label: "ยอดซื้อรวม", sub: `${fmt(totalBuyQty)} กก.`, value: totalBuyValue, icon: ArrowDownToLine, color: "#1e40af", bg: "#dbeafe" },
+                  { label: "ยอดขายรวม", sub: `${fmt(totalSaleQtyRange)} กก.`, value: totalSaleValue, icon: ArrowUpFromLine, color: "#166534", bg: "#dcfce7" },
+                  { label: "ค่าใช้จ่ายรวม", sub: "ประจำงวด", value: totalExpValue, icon: Receipt, color: "#92400e", bg: "#fef3c7" },
+                  { label: "มูลค่าลงทุนที่ดิน", sub: "ยกมา", value: landDebt, icon: TrendingUp, color: "#6b7280", bg: "#f3f4f6" },
+                ].map((c, i) => {
+                  const Icon = c.icon;
+                  return (
+                    <div key={i} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
+                      <div style={{ width: 38, height: 38, borderRadius: 9, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                        <Icon size={20} color={c.color} />
+                      </div>
+                      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 2 }}>{c.label}</div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 6 }}>{c.sub}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: c.color, lineHeight: 1 }}>฿{fmt(c.value)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ตารางกำไรขาดทุน */}
+              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
+                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 20px", fontSize: 15, fontWeight: 700 }}>
+                  รายงานกำไร/ขาดทุน — {pnlDateFrom} ถึง {pnlDateTo}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <tbody>
+                    {/* ซื้อ-ขาย ในระบบ */}
+                    <tr>
+                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>รายรับ / รายจ่ายสินค้า (ในระบบ)</td>
+                    </tr>
+                    {[
+                      { label: "ยอดซื้อ (ในระบบ)", qty: fmt(totalBuyQty), value: totalBuyValue, neg: true },
+                      { label: "ยอดขาย (ในระบบ)", qty: fmt(totalSaleQtyRange), value: totalSaleValue, neg: false },
+                    ].map((r, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{r.qty} กก.</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.neg ? "#1e40af" : "#166534", fontSize: 16 }}>฿{fmt(r.value)}</td>
+                      </tr>
+                    ))}
+
+                    {/* ยอดยกมา */}
+                    <tr>
+                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#fef9c3" }}>ยอดยกมา (ก่อนเริ่มใช้ระบบ / ปีก่อน)</td>
+                    </tr>
+                    {[
+                      { label: "ต้นทุนยกมา", value: pnlOpenCost, setter: setPnlOpenCost, color: "#1e40af" },
+                      { label: "รายได้ยกมา", value: pnlOpenRevenue, setter: setPnlOpenRevenue, color: "#166534" },
+                    ].map((r, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "#fffbeb" : "#fefce8" }}>
+                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
+                        <td style={tdStyle}></td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          <input type="number" value={r.value || ""} placeholder="0"
+                            onChange={e => r.setter(e.target.value)}
+                            style={{ width: 160, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
+                        </td>
+                      </tr>
+                    ))}
+
+                    {/* รวมทั้งหมด */}
+                    <tr style={{ background: "#f0fdf4", borderTop: "2px solid #86efac" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>ต้นทุนรวมทั้งหมด</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1e40af", fontSize: 16 }}>฿{fmt(totalCostAll)}</td>
+                    </tr>
+                    <tr style={{ background: "#f0fdf4" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>รายได้รวมทั้งหมด</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#166534", fontSize: 16 }}>฿{fmt(totalRevenueAll)}</td>
+                    </tr>
+
+                    {/* กำไรขั้นต้น */}
+                    <tr style={{ background: pnlBg(grossProfitAll), borderTop: "2px solid #e5e7eb" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>กำไรขั้นต้น (รายได้รวม − ต้นทุนรวม)</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, fontSize: 18, color: pnlColor(grossProfitAll) }}>
+                        {grossProfitAll < 0 ? `(฿${fmt(Math.abs(grossProfitAll))})` : `฿${fmt(grossProfitAll)}`}
+                      </td>
+                    </tr>
+
+                    {/* ค่าใช้จ่าย */}
+                    <tr>
+                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>ค่าใช้จ่ายดำเนินงาน</td>
+                    </tr>
+                    <tr>
+                      <td style={{ ...tdStyle, color: "#374151" }}>ค่าใช้จ่ายประจำงวด (ในระบบ)</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#92400e", fontSize: 16 }}>฿{fmt(totalExpValue)}</td>
+                    </tr>
+
+                    {/* กำไรดำเนินงาน */}
+                    <tr style={{ background: pnlBg(operatingProfit), borderTop: "2px solid #e5e7eb" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>กำไรจากการดำเนินงาน</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, fontSize: 18, color: pnlColor(operatingProfit) }}>
+                        {operatingProfit < 0 ? `(฿${fmt(Math.abs(operatingProfit))})` : `฿${fmt(operatingProfit)}`}
+                      </td>
+                    </tr>
+
+                    {/* รายการพิเศษ */}
+                    <tr>
+                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>รายการพิเศษ / ยอดยกมา</td>
+                    </tr>
+                    {[
+                      { label: "กำไร/ขาดทุนยกมา (บวก=กำไรยกมา, ลบ=ขาดทุนยกมา)", value: pnlOpenProfit, setter: setPnlOpenProfit },
+                      { label: "มูลค่าลงทุนที่ดิน (หักออก)", value: landDebt, setter: setLandDebt },
+                    ].map((r, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? "#fafafa" : "#f3f4f6" }}>
+                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
+                        <td style={tdStyle}></td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          <input type="number" value={r.value || ""} placeholder="0"
+                            onChange={e => r.setter(e.target.value)}
+                            style={{ width: 160, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
+                        </td>
+                      </tr>
+                    ))}
+
+                    {/* กำไรสุทธิ */}
+                    <tr style={{ background: pnlBg(netProfit), borderTop: "3px solid #374151" }}>
+                      <td style={{ ...tdStyle, fontWeight: 800, fontSize: 16 }}>กำไร/ขาดทุนสุทธิ</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 900, fontSize: 22, color: pnlColor(netProfit) }}>
+                        {netProfit < 0 ? `(฿${fmt(Math.abs(netProfit))})` : `฿${fmt(netProfit)}`}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         );
