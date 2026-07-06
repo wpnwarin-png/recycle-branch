@@ -6458,19 +6458,41 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const n = Number(val) || 0;
     setCreditManualState(n);
     try { localStorage.setItem("creditManual", String(n)); } catch {}
+    setCompanySettings(prev => ({ ...prev, creditManual: n }));
   };
+
   const [returnBankName, setReturnBankNameState] = React.useState(() => { try { return localStorage.getItem("returnBankName") || ""; } catch { return ""; } });
   const [returnBankNo, setReturnBankNoState] = React.useState(() => { try { return localStorage.getItem("returnBankNo") || ""; } catch { return ""; } });
   const [returnBankOwner, setReturnBankOwnerState] = React.useState(() => { try { return localStorage.getItem("returnBankOwner") || ""; } catch { return ""; } });
-  const setReturnBankName = (v) => { setReturnBankNameState(v); try { localStorage.setItem("returnBankName", v); } catch {} };
-  const setReturnBankNo = (v) => { setReturnBankNoState(v); try { localStorage.setItem("returnBankNo", v); } catch {} };
-  const setReturnBankOwner = (v) => { setReturnBankOwnerState(v); try { localStorage.setItem("returnBankOwner", v); } catch {} };
+  const setReturnBankName = (v) => { setReturnBankNameState(v); try { localStorage.setItem("returnBankName", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankName: v })); };
+  const setReturnBankNo = (v) => { setReturnBankNoState(v); try { localStorage.setItem("returnBankNo", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankNo: v })); };
+  const setReturnBankOwner = (v) => { setReturnBankOwnerState(v); try { localStorage.setItem("returnBankOwner", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankOwner: v })); };
+
+  // sync creditManual + returnBank จาก companySettings เมื่อโหลดครั้งแรก
+  const creditSyncRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!creditSyncRef.current && companySettings && Object.keys(companySettings).length > 0) {
+      if (companySettings.creditManual != null) setCreditManualState(Number(companySettings.creditManual) || 0);
+      if (companySettings.returnBankName) setReturnBankNameState(companySettings.returnBankName);
+      if (companySettings.returnBankNo) setReturnBankNoState(companySettings.returnBankNo);
+      if (companySettings.returnBankOwner) setReturnBankOwnerState(companySettings.returnBankOwner);
+      creditSyncRef.current = true;
+    }
+  }, [companySettings]);
   const creditLimit = Number(companySettings?.creditLimit) || 0;
   const creditAccounts = companySettings?.creditAccounts || []; // array of storeBankAccount ids ที่นับในวงเงิน
 
-  const [payFlags, setPayFlags] = React.useState(() => {
+  const [payFlags, setPayFlagsState] = React.useState(() => {
     try { return JSON.parse(localStorage.getItem("payFlags") || "{}"); } catch { return {}; }
   });
+  // sync payFlags จาก companySettings (Supabase) เมื่อโหลดครั้งแรก
+  const payFlagsInitRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!payFlagsInitRef.current && companySettings?.payFlags && Object.keys(companySettings.payFlags).length > 0) {
+      setPayFlagsState(companySettings.payFlags);
+      payFlagsInitRef.current = true;
+    }
+  }, [companySettings]);
   const [showTransferSheet, setShowTransferSheet] = React.useState(false);
   const [transferTab, setTransferTab] = React.useState("purchase"); // "purchase" | "expense"
   const [transferDetailModal, setTransferDetailModal] = React.useState(null); // { row }
@@ -6486,8 +6508,10 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   };
   const setFlag = (id, flag, val) => {
     const next = { ...payFlags, [`${id}_${flag}`]: val };
-    setPayFlags(next);
+    setPayFlagsState(next);
     try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
+    // sync ไป Supabase ผ่าน companySettings
+    setCompanySettings(prev => ({ ...prev, payFlags: next }));
   };
   const getFlag = (id, flag) => !!payFlags[`${id}_${flag}`];
   const [activeView, setActiveView] = useState("unpaid-purchase");
