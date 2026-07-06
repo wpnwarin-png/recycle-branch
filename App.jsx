@@ -747,19 +747,14 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
       events.push({ type: "in", date: po.date, ref: po.id, productId: it.productId, qty: it.net, price: it.price });
     });
   });
-  sales.forEach((inv) => {
-    inv.items.forEach((it) => {
-      if (it.fromWithdrawal) return; // สต๊อกถูกตัดไปแล้วตอนเบิก ไม่ต้องตัดซ้ำที่นี่
-      events.push({ type: "out", date: inv.date, ref: inv.id, productId: it.productId, qty: it.net });
-    });
-  });
+  // ข้อ 7: ตัดสต๊อกจากใบเบิกเท่านั้น — ใบขายไม่ตัดสต๊อกอีกต่อไป
   withdrawals.forEach((lot) => {
     (lot.items || []).forEach((it) => {
       events.push({ type: "withdraw", date: lot.date, ref: lot.id, productId: it.sourceProductId, qty: it.qty });
     });
   });
-  // เรียงตามวันที่ แล้วให้ "withdraw" มาก่อน "in"/"out" ในวันเดียวกัน เพื่อให้ลำดับสอดคล้องกับการตัดสต๊อกทันที
-  const typeOrder = { in: 0, withdraw: 1, out: 2 };
+  // เรียงตามวันที่ ให้ in มาก่อน withdraw ในวันเดียวกัน
+  const typeOrder = { in: 0, withdraw: 1 };
   events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (typeOrder[a.type] ?? 1) - (typeOrder[b.type] ?? 1)));
 
   events.forEach((ev) => {
