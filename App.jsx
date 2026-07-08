@@ -801,7 +801,8 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   if (typeof window !== "undefined") {
     const grandTotalIn = Object.entries(lots).reduce((s, [pid, ls]) => s + ls.reduce((ss, l) => ss + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0), 0);
     const grandTotalConsumed = movements.filter(mv => mv.type !== "in").reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
-    console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| totalConsumed:", grandTotalConsumed.toFixed(2), "| net:", (grandTotalIn - grandTotalConsumed).toFixed(2));
+    const summaryTotal = summary.reduce((s, x) => s + x.totalCost, 0);
+    console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| totalConsumed:", grandTotalConsumed.toFixed(2), "| net:", (grandTotalIn - grandTotalConsumed).toFixed(2), "| summaryTotal:", summaryTotal.toFixed(2));
   }
 
   // Build per-product movement history with running balance
