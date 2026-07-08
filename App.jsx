@@ -2447,8 +2447,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     sales.forEach((inv) => (inv.payments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
     (prepayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0));
     (bankTransfers || []).forEach((t) => add(t.toBankId, Number(t.amount) || 0));
+    // รับชำระลูกหนี้ยกมา — นับเข้า bankInflows ด้วย
+    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
     return inn;
-  }, [sales, bankTransfers, prepayments]);
+  }, [sales, bankTransfers, prepayments, customers]);
 
 
   // ---------- ซื้อ/ขาย แบ่งตามประเภทสินค้า และแบ่งตามรายการสินค้า ----------
@@ -3421,6 +3423,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             bankInflowsRange[t.toBankId] = (bankInflowsRange[t.toBankId] || 0) + (Number(t.amount) || 0);
           }
         });
+        // รับชำระลูกหนี้ยกมา — นับเข้า bankInflowsRange ด้วย
+        (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => {
+          if (p.toStoreBankId && p.toStoreBankId !== "CASH" && p.toStoreBankId !== "PREPAYMENT" && inRange(p.date)) {
+            bankInflowsRange[p.toStoreBankId] = (bankInflowsRange[p.toStoreBankId] || 0) + (Number(p.amount) || 0);
+          }
+        }));
 
         const bankOutflowsRange = {};
         const addOutflowRange = (bankId, amount, date) => {
@@ -6582,10 +6590,10 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const amt = Number(c.payableOpening) || 0;
       if (amt <= 0) return;
       const vid = `OPENING-PAY-${c.id}`;
-      const paid = (c.payableOpeningPaid || 0);
+      const paid = Number(c.payableOpeningPaid) || 0;
       const remaining = amt - paid;
-      if (remaining <= 0.01) return;
-      rows.push({ kind: "purchase", id: vid, date: c.payableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining, payStatus: paid > 0.01 ? "partial" : "unpaid", isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.payableOpeningPayments || [], vatRate: 0, status: "อนุมัติแล้ว", _openingLabel: `เจ้าหนี้ยกมา · ${c.name}` } });
+      const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
+      rows.push({ kind: "purchase", id: vid, date: c.payableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining: Math.max(0, remaining), payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.payableOpeningPayments || [], vatRate: 0, status: "อนุมัติแล้ว", _openingLabel: `เจ้าหนี้ยกมา · ${c.name}` } });
     });
     return rows;
   }, [purchases, customers]);
@@ -6608,10 +6616,11 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const amt = Number(c.receivableOpening) || 0;
       if (amt <= 0) return;
       const vid = `OPENING-REC-${c.id}`;
-      const paid = (c.receivableOpeningPaid || 0);
+      const paid = Number(c.receivableOpeningPaid) || 0;
       const remaining = amt - paid;
-      if (remaining <= 0.01) return;
-      rows.push({ kind: "sale", id: vid, date: c.receivableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining, payStatus: paid > 0.01 ? "partial" : "unpaid", isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.receivableOpeningPayments || [], vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
+      const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
+      // แสดงทุก status (รวมที่ชำระครบแล้ว) เพื่อให้ปรากฏในแท็บรับชำระแล้ว
+      rows.push({ kind: "sale", id: vid, date: c.receivableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining: Math.max(0, remaining), payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.receivableOpeningPayments || [], vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
     });
     return rows;
   }, [sales, customers]);
