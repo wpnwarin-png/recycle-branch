@@ -780,8 +780,14 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   });
 
   const summary = products.map((p) => {
+    // คำนวณมูลค่าสต๊อกคงเหลือ = ยอดรับเข้าทั้งหมด − ต้นทุนที่เบิกออกไปแล้ว
+    // วิธีนี้แม่นยำกว่า qtyRemaining * unitCost ที่สะสมเศษปัดเงิน
+    const totalIn = (lots[p.id] || []).reduce((s, l) => s + l.qtyOriginal * l.unitCost, 0);
+    const totalConsumed = movements
+      .filter((mv) => mv.productId === p.id && mv.type !== "in")
+      .reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
+    const totalCost = Math.max(0, totalIn - totalConsumed);
     const remaining = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
-    const totalCost = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining) * l.unitCost, 0);
     const avgCost = remaining > 0 ? totalCost / remaining : 0;
     return { productId: p.id, name: p.name, unit: p.unit, qty: remaining, totalCost, avgCost };
   });
@@ -1787,6 +1793,28 @@ export default function App() {
   const [prepayments, setPrepayments] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [bankTransfers, setBankTransfers] = useState([]);
+
+  // payFlags — เก็บที่ App level เพื่อ sync Supabase ผ่าน companySettings
+  const [payFlags, setPayFlagsApp] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("payFlags") || "{}"); } catch { return {}; }
+  });
+  const setPayFlags = (next) => {
+    setPayFlagsApp(next);
+    try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
+    setCompanySettings(prev => ({ ...prev, payFlags: next }));
+  };
+
+  // sync payFlags จาก companySettings เมื่อ realtime อัปเดตจากเครื่องอื่น
+  const lastPayFlagsRef = useRef(null);
+  useEffect(() => {
+    if (!companySettings?.payFlags) return;
+    const incoming = JSON.stringify(companySettings.payFlags);
+    if (incoming !== lastPayFlagsRef.current) {
+      lastPayFlagsRef.current = incoming;
+      setPayFlagsApp(companySettings.payFlags);
+      try { localStorage.setItem("payFlags", incoming); } catch {}
+    }
+  }, [companySettings?.payFlags]);
   const [expenses, setExpenses] = useState(initialExpenses);
   const [loans, setLoans] = useState(initialLoans);
   const [assets, setAssets] = useState(initialAssets);
@@ -1833,6 +1861,10 @@ export default function App() {
         if (data.storeBankAccounts) setStoreBankAccounts(dedup(data.storeBankAccounts))
         if (data.shopProfile)   setShopProfile(data.shopProfile)
         if (data.companySettings) setCompanySettings(data.companySettings)
+        if (data.companySettings?.payFlags) {
+          setPayFlagsApp(data.companySettings.payFlags);
+          try { localStorage.setItem("payFlags", JSON.stringify(data.companySettings.payFlags)); } catch {}
+        }
         if (data.users)         setUsers(data.users)
         if (data.unitOptions)   setUnitOptions(data.unitOptions)
         if (data.expenseCategories) setExpenseCategories(data.expenseCategories)
@@ -1865,7 +1897,13 @@ export default function App() {
       if (data.loans)           setLoans(dedup(data.loans))
       if (data.storeBankAccounts) setStoreBankAccounts(dedup(data.storeBankAccounts))
       if (data.shopProfile)     setShopProfile(data.shopProfile)
-      if (data.companySettings) setCompanySettings(data.companySettings)
+      if (data.companySettings) {
+        setCompanySettings(data.companySettings)
+        if (data.companySettings.payFlags) {
+          setPayFlagsApp(data.companySettings.payFlags);
+          try { localStorage.setItem("payFlags", JSON.stringify(data.companySettings.payFlags)); } catch {}
+        }
+      }
       if (data.users)           setUsers(data.users)
       if (data.unitOptions)     setUnitOptions(data.unitOptions)
       if (data.expenseCategories) setExpenseCategories(data.expenseCategories)
@@ -2183,7 +2221,7 @@ export default function App() {
         {tab === "purchases" && <PurchasesTab products={products} customers={customers} purchases={purchases} setPurchases={setPurchases} storeBankAccounts={storeBankAccounts} deposits={deposits} companySettings={companySettings} />}
         {tab === "withdrawals" && <WithdrawalsTab products={products} purchases={purchases} sales={sales} setSales={setSales} withdrawals={withdrawals} setWithdrawals={setWithdrawals} inventory={inventory} customers={customers} companySettings={companySettings} />}
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
-        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} />}
+        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setPayFlags={setPayFlags} />}
         {tab === "delivery" && <DeliveryTab deliveries={deliveries} setDeliveries={setDeliveries} products={products} customers={customers} sales={sales} companySettings={companySettings} />}
         {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} />}
         {tab === "deposits" && <DepositsTab customers={customers} setCustomers={setCustomers} deposits={deposits} setDeposits={setDeposits} purchases={purchases} storeBankAccounts={storeBankAccounts} />}
@@ -6442,7 +6480,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 // ===================================================================
 // PAYMENTS TAB (รับชำระ/จ่ายชำระ — รวมรายการค้างชำระจากใบรับสินค้าและใบขาย)
 // ===================================================================
-function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers }) {
+function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers, payFlags, setPayFlags }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
   const isMobile = useIsMobileView();
@@ -6477,17 +6515,6 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   const creditLimit = Number(companySettings?.creditLimit) || 0;
   const creditAccounts = companySettings?.creditAccounts || []; // array of storeBankAccount ids ที่นับในวงเงิน
 
-  const [payFlags, setPayFlagsState] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem("payFlags") || "{}"); } catch { return {}; }
-  });
-  // sync payFlags จาก companySettings (Supabase) เมื่อโหลดครั้งแรก
-  const payFlagsInitRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!payFlagsInitRef.current && companySettings?.payFlags && Object.keys(companySettings.payFlags).length > 0) {
-      setPayFlagsState(companySettings.payFlags);
-      payFlagsInitRef.current = true;
-    }
-  }, [companySettings]);
   const [showTransferSheet, setShowTransferSheet] = React.useState(false);
   const [transferTab, setTransferTab] = React.useState("purchase"); // "purchase" | "expense"
   const [transferDetailModal, setTransferDetailModal] = React.useState(null); // { row }
@@ -6502,11 +6529,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     try { localStorage.setItem("transferDetails", JSON.stringify(next)); } catch {}
   };
   const setFlag = (id, flag, val) => {
-    const next = { ...payFlags, [`${id}_${flag}`]: val };
-    setPayFlagsState(next);
-    try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
-    // sync ไป Supabase ผ่าน companySettings
-    setCompanySettings(prev => ({ ...prev, payFlags: next }));
+    setPayFlags({ ...payFlags, [`${id}_${flag}`]: val });
   };
   const getFlag = (id, flag) => !!payFlags[`${id}_${flag}`];
   const [activeView, setActiveView] = useState("unpaid-purchase");
