@@ -806,7 +806,17 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const withOriginal = Object.values(lots).flat().filter(l => l.totalCostOriginal !== undefined).length;
     const withoutOriginal = Object.values(lots).flat().filter(l => l.totalCostOriginal === undefined).length;
     const altTotal = Object.entries(lots).reduce((s, [pid, ls]) => s + ls.reduce((ss, l) => ss + l.qtyOriginal * l.unitCost, 0), 0);
-    console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| summaryTotal:", summaryTotal.toFixed(2), "| lots with totalCostOriginal:", withOriginal, "| without:", withoutOriginal, "| altTotal(qty*price):", altTotal.toFixed(2));
+    const lotsKeys = Object.keys(lots);
+    const productIds = products.map(p => p.id);
+    const inLotsNotProducts = lotsKeys.filter(id => !productIds.includes(id));
+    const inProductsNotLots = productIds.filter(id => !lotsKeys.includes(id));
+    const dupProducts = productIds.filter((id, i) => productIds.indexOf(id) !== i);
+    if (inLotsNotProducts.length > 0) console.log("[Debug] lots keys NOT in products:", inLotsNotProducts);
+    if (dupProducts.length > 0) console.log("[Debug] duplicate product ids:", dupProducts);
+    // รวม totalCostOriginal จาก lots ที่ไม่อยู่ใน products
+    const orphanTotal = inLotsNotProducts.reduce((s, pid) => s + (lots[pid] || []).reduce((ss, l) => ss + (l.totalCostOriginal ?? 0), 0), 0);
+    if (orphanTotal > 0) console.log("[Debug] orphan lots totalCost (not in products):", orphanTotal.toFixed(2));
+    console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| summaryTotal:", summaryTotal.toFixed(2), "| diff:", (grandTotalIn - summaryTotal).toFixed(2));
   }
 
   // Build per-product movement history with running balance
