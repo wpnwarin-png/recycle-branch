@@ -803,6 +803,15 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const grandTotalConsumed = movements.filter(mv => mv.type !== "in").reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
     const summaryTotal = summary.reduce((s, x) => s + x.totalCost, 0);
     console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| totalConsumed:", grandTotalConsumed.toFixed(2), "| net:", (grandTotalIn - grandTotalConsumed).toFixed(2), "| summaryTotal:", summaryTotal.toFixed(2));
+    // หาสินค้าที่มีความต่าง
+    summary.forEach(x => {
+      const lotsIn = (lots[x.productId] || []).reduce((s, l) => s + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0);
+      const consumed = movements.filter(mv => mv.productId === x.productId && mv.type !== "in").reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
+      const expected = lotsIn - consumed;
+      if (Math.abs(expected - x.totalCost) > 0.001) {
+        console.log(`[Mismatch] ${x.name}: lotsIn=${lotsIn.toFixed(2)}, consumed=${consumed.toFixed(2)}, expected=${expected.toFixed(2)}, got=${x.totalCost.toFixed(2)}, diff=${(expected - x.totalCost).toFixed(2)}`);
+      }
+    });
   }
 
   // Build per-product movement history with running balance
