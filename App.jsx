@@ -2239,7 +2239,7 @@ export default function App() {
         {tab === "purchases" && <PurchasesTab products={products} customers={customers} purchases={purchases} setPurchases={setPurchases} storeBankAccounts={storeBankAccounts} deposits={deposits} companySettings={companySettings} />}
         {tab === "withdrawals" && <WithdrawalsTab products={products} purchases={purchases} sales={sales} setSales={setSales} withdrawals={withdrawals} setWithdrawals={setWithdrawals} inventory={inventory} customers={customers} companySettings={companySettings} />}
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
-        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setPayFlags={setPayFlags} />}
+        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} setDeposits={setDeposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setPayFlags={setPayFlags} />}
         {tab === "delivery" && <DeliveryTab deliveries={deliveries} setDeliveries={setDeliveries} products={products} customers={customers} sales={sales} companySettings={companySettings} />}
         {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} />}
         {tab === "deposits" && <DepositsTab customers={customers} setCustomers={setCustomers} deposits={deposits} setDeposits={setDeposits} purchases={purchases} storeBankAccounts={storeBankAccounts} />}
@@ -6498,7 +6498,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 // ===================================================================
 // PAYMENTS TAB (รับชำระ/จ่ายชำระ — รวมรายการค้างชำระจากใบรับสินค้าและใบขาย)
 // ===================================================================
-function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers, payFlags, setPayFlags }) {
+function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, setDeposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers, payFlags, setPayFlags }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
   const isMobile = useIsMobileView();
@@ -6684,7 +6684,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       p => p.date === creditDate
     );
     const dayRev  = sumActualPayments(
-      allSaleRows,
+      allSaleRows.filter(r => !r.isOpening),
       "toStoreBankId",
       r => true,
       p => p.date === creditDate
@@ -6693,10 +6693,10 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 
     // ยอดค้างเบิก = ทุก payment ที่ยังไม่ติ๊กเบิก (ทุกวัน) - ยอดใช้วันนี้ (เพราะวันนี้นับแยกอยู่แล้ว)
     const pendingPurchaseAll = sumActualPayments(
-      allPurchaseRows,
+      allPurchaseRows.filter(r => !r.isOpening),
       "fromStoreBankId",
       r => !payFlags[`${r.id}_withdrawn`],
-      null  // ทุกวัน
+      null
     );
     const pendingExpAll = sumActualPayments(
       allExpenseRows,
@@ -6705,7 +6705,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       null
     );
     const pendingRevAll = sumActualPayments(
-      allSaleRows,
+      allSaleRows.filter(r => !r.isOpening),
       "toStoreBankId",
       r => !payFlags[`${r.id}_withdrawn`],
       null
@@ -6809,12 +6809,28 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           payableOpeningPayments: [...(c.payableOpeningPayments || []), ...cleaned],
         } : c));
       } else {
-        // ลูกหนี้ยกมา
+        // ลูกหนี้ยกมา — บันทึกใน customer และสร้าง deposit record เข้า statement
         setCustomers(customers.map(c => c.id === payModal.customerId ? {
           ...c,
           receivableOpeningPaid: (Number(c.receivableOpeningPaid) || 0) + addedPaid,
           receivableOpeningPayments: [...(c.receivableOpeningPayments || []), ...cleaned],
         } : c));
+        // สร้าง deposit record เพื่อให้ปรากฏใน statement และแดชบอร์ดเงินหมุน
+        cleaned.forEach(p => {
+          const depId = "DEP-OPR-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+          const dep = {
+            id: depId,
+            date: p.date || ts.slice(0, 10),
+            customerId: payModal.customerId,
+            amount: p.amount,
+            method: p.method || "โอนเงิน",
+            toStoreBankId: p.toStoreBankId || "",
+            note: `รับชำระลูกหนี้ยกมา — ${customers.find(c => c.id === payModal.customerId)?.name || payModal.customerId}`,
+            type: "receivable_opening",
+            updated_at: ts,
+          };
+          setDeposits(prev => [...(prev || []), dep]);
+        });
       }
     } else if (payModal.kind === "purchase") {
       setPurchases(purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po));
