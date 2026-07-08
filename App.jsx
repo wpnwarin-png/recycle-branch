@@ -744,7 +744,12 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   purchases.forEach((po) => {
     if (po.status !== "อนุมัติแล้ว") return;
     po.items.forEach((it) => {
-      events.push({ type: "in", date: po.date, ref: po.id, productId: it.productId, qty: it.net, price: it.price });
+      const qty = Number(it.net) || 0;
+      const price = Number(it.price) || 0;
+      const discountPct = Number(it.discountPct) || 0;
+      // ใช้สูตรเดียวกับ lineTotal ในใบรับ (Math.round 2 ทศนิยม)
+      const lineTotal = Math.round(qty * price * (1 - discountPct / 100) * 100) / 100;
+      events.push({ type: "in", date: po.date, ref: po.id, productId: it.productId, qty, price, lineTotal });
     });
   });
   // ข้อ 7: ตัดสต๊อกจากใบเบิกเท่านั้น — ใบขายไม่ตัดสต๊อกอีกต่อไป
@@ -760,7 +765,8 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   events.forEach((ev) => {
     if (!lots[ev.productId]) lots[ev.productId] = [];
     if (ev.type === "in") {
-      lots[ev.productId].push({ date: ev.date, ref: ev.ref, qtyRemaining: ev.qty, qtyOriginal: ev.qty, unitCost: ev.price });
+      const totalCostOriginal = ev.lineTotal ?? (ev.qty * ev.price);
+      lots[ev.productId].push({ date: ev.date, ref: ev.ref, qtyRemaining: ev.qty, qtyOriginal: ev.qty, unitCost: ev.price, totalCostOriginal });
       movements.push({ ...ev, balanceQty: null });
     } else {
       let remainingToConsume = ev.qty;
@@ -780,9 +786,8 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   });
 
   const summary = products.map((p) => {
-    // คำนวณมูลค่าสต๊อกคงเหลือ = ยอดรับเข้าทั้งหมด − ต้นทุนที่เบิกออกไปแล้ว
-    // วิธีนี้แม่นยำกว่า qtyRemaining * unitCost ที่สะสมเศษปัดเงิน
-    const totalIn = (lots[p.id] || []).reduce((s, l) => s + l.qtyOriginal * l.unitCost, 0);
+    // totalIn = ผลรวมต้นทุนทุก lot ที่รับเข้า (เก็บไว้แล้วในแต่ละ lot ไม่ต้องคูณซ้ำ)
+    const totalIn = (lots[p.id] || []).reduce((s, l) => s + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0);
     const totalConsumed = movements
       .filter((mv) => mv.productId === p.id && mv.type !== "in")
       .reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
