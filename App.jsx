@@ -737,7 +737,8 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const cost = Number(p.openingCost) || 0;
     if (qty > 0) {
       const openingDate = p.openingMonth ? `${p.openingMonth}-01` : "0000-01-01";
-      events.push({ type: "in", date: openingDate, ref: "ยอดยกมา", productId: p.id, qty, price: cost, isOpening: true });
+      const lineTotal = Math.round(qty * cost * 100) / 100;
+      events.push({ type: "in", date: openingDate, ref: "ยอดยกมา", productId: p.id, qty, price: cost, lineTotal, isOpening: true });
     }
   });
 
