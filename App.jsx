@@ -787,7 +787,6 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
   });
 
   const summary = products.map((p) => {
-    // totalIn = ผลรวมต้นทุนทุก lot ที่รับเข้า (เก็บไว้แล้วในแต่ละ lot ไม่ต้องคูณซ้ำ)
     const totalIn = (lots[p.id] || []).reduce((s, l) => s + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0);
     const totalConsumed = movements
       .filter((mv) => mv.productId === p.id && mv.type !== "in")
@@ -797,6 +796,13 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const avgCost = remaining > 0 ? totalCost / remaining : 0;
     return { productId: p.id, name: p.name, unit: p.unit, qty: remaining, totalCost, avgCost };
   });
+
+  // debug: expose to window for console inspection
+  if (typeof window !== "undefined") {
+    const grandTotalIn = Object.entries(lots).reduce((s, [pid, ls]) => s + ls.reduce((ss, l) => ss + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0), 0);
+    const grandTotalConsumed = movements.filter(mv => mv.type !== "in").reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
+    console.log("[Stock Debug] totalIn:", grandTotalIn.toFixed(2), "| totalConsumed:", grandTotalConsumed.toFixed(2), "| net:", (grandTotalIn - grandTotalConsumed).toFixed(2));
+  }
 
   // Build per-product movement history with running balance
   const history = {};
