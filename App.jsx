@@ -5534,6 +5534,8 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
     prodName(g.productId).toLowerCase().includes(aggregateSearch.toLowerCase())
   );
 
+  const [selectedInvoices, setSelectedInvoices] = React.useState({});
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" }}>
       <div style={{ flexShrink: 0 }}>
@@ -5632,7 +5634,6 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
             filteredAggregates.forEach((g) => { if (!grouped[g.saleId]) grouped[g.saleId] = []; grouped[g.saleId].push(g); });
             const sortedEntries = Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true }));
             const allIds = sortedEntries.map(([id]) => id);
-            const [selectedInvoices, setSelectedInvoices] = React.useState({});
             const anySelected = allIds.some(id => selectedInvoices[id]);
             const allSelected = allIds.length > 0 && allIds.every(id => selectedInvoices[id]);
             return (
