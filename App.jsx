@@ -6654,7 +6654,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const amt = Number(c.receivableOpening) || 0;
       if (amt <= 0) return;
       // นับยอดชำระจาก OPENING-SALE record (วิธีใหม่) หรือ customer field (วิธีเก่า)
-      const openingSaleId = `OPENING-SALE-${c.id}`;
+      const openingSaleId = `OPENING-REC-${c.id}`;
       const openingSale = sales.find(s => s.id === openingSaleId);
       const paidFromSale = (openingSale?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
       const paidFromCustomer = Number(c.receivableOpeningPaid) || 0;
@@ -6869,28 +6869,26 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
         if (updatedC) saveToSupabase('customers', [updatedC]);
       } else {
-        // ลูกหนี้ยกมา — สร้าง sale invoice จริงๆ เพื่อให้ปรากฏใน statement และแดชบอร์ด
+        // ลูกหนี้ยกมา — บันทึกลงใน sale record OPENING-REC-xxx (ใช้ id เดิมที่มีใน Supabase)
         const custName = customers.find(c => c.id === payModal.customerId)?.name || "";
-        const existingSaleId = `OPENING-SALE-${payModal.customerId}`;
-        const existingSale = sales.find(s => s.id === existingSaleId);
+        const openingSaleId = `OPENING-REC-${payModal.customerId}`;
+        const existingSale = sales.find(s => s.id === openingSaleId);
         const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
         if (existingSale) {
-          // เพิ่ม payments เข้าไปใน sale ที่มีอยู่แล้ว
           const updatedSale = { ...existingSale, payments: [...(existingSale.payments || []), ...cleaned], updated_at: ts };
-          setSales(prev => prev.map(s => s.id === existingSaleId ? updatedSale : s));
+          setSales(prev => prev.map(s => s.id === openingSaleId ? updatedSale : s));
           saveToSupabase('sales', [updatedSale]);
         } else {
-          // สร้าง sale ใหม่
           const newSale = {
-            id: existingSaleId,
+            id: openingSaleId,
             date: cleaned[0]?.date || ts.slice(0, 10),
             customerId: payModal.customerId,
-            items: [{ productId: "", qty: 0, net: 0, price: 0 }],
-            discount: 0, vatRate: 0,
+            items: [], discount: 0, vatRate: 0,
             payments: cleaned,
             paymentStatus: "ชำระแล้ว",
             note: `รับชำระลูกหนี้ยกมา — ${custName}`,
             _isOpeningRec: true,
+            _openingLabel: `ลูกหนี้ยกมา · ${custName}`,
             updated_at: ts,
           };
           setSales(prev => [...prev, newSale]);
