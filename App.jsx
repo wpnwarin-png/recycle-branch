@@ -2448,11 +2448,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     (prepayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0));
     (bankTransfers || []).forEach((t) => add(t.toBankId, Number(t.amount) || 0));
     // รับชำระลูกหนี้ยกมา — นับเข้า bankInflows ด้วย
-    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => {
-      console.log('[OpeningRec]', c.name, 'toStoreBankId:', p.toStoreBankId, 'amount:', p.amount);
-      add(p.toStoreBankId, Number(p.amount) || 0);
-    }));
-    console.log('[bankInflows result]', inn);
+    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
     return inn;
   }, [sales, bankTransfers, prepayments, customers]);
 
@@ -6658,10 +6654,9 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const amt = Number(c.receivableOpening) || 0;
       const paid = Number(c.receivableOpeningPaid) || 0;
       const payments = c.receivableOpeningPayments || [];
-      // แสดงเฉพาะที่มียอดและมีประวัติการชำระจริง
-      if (amt <= 0 && payments.length === 0) return;
-      const total = amt > 0 ? amt : paid;
-      if (total <= 0) return;
+      // แสดงเฉพาะที่มียอดยกมาจริง (amt > 0) หรือยังมียอดค้างชำระ
+      if (amt <= 0) return;
+      const total = amt;
       const remaining = Math.max(0, total - paid);
       const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
       const latestDate = payments.length > 0 ? payments.reduce((m, p) => p.date > m ? p.date : m, payments[0].date) : (c.receivableOpeningDate || new Date().toISOString().slice(0, 10));
@@ -6870,32 +6865,42 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
         if (updatedC) saveToSupabase('customers', [updatedC]);
       } else {
-        // ลูกหนี้ยกมา — บันทึกใน customer และสร้าง deposit record เข้า statement
+        // ลูกหนี้ยกมา — สร้าง sale invoice จริงๆ เพื่อให้ปรากฏใน statement และแดชบอร์ด
+        const custName = customers.find(c => c.id === payModal.customerId)?.name || "";
+        const existingSaleId = `OPENING-SALE-${payModal.customerId}`;
+        const existingSale = sales.find(s => s.id === existingSaleId);
+        const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
+        if (existingSale) {
+          // เพิ่ม payments เข้าไปใน sale ที่มีอยู่แล้ว
+          const updatedSale = { ...existingSale, payments: [...(existingSale.payments || []), ...cleaned], updated_at: ts };
+          setSales(prev => prev.map(s => s.id === existingSaleId ? updatedSale : s));
+          saveToSupabase('sales', [updatedSale]);
+        } else {
+          // สร้าง sale ใหม่
+          const newSale = {
+            id: existingSaleId,
+            date: cleaned[0]?.date || ts.slice(0, 10),
+            customerId: payModal.customerId,
+            items: [{ productId: "", qty: 0, net: 0, price: 0 }],
+            discount: 0, vatRate: 0,
+            payments: cleaned,
+            paymentStatus: "ชำระแล้ว",
+            note: `รับชำระลูกหนี้ยกมา — ${custName}`,
+            _isOpeningRec: true,
+            updated_at: ts,
+          };
+          setSales(prev => [...prev, newSale]);
+          saveToSupabase('sales', [newSale]);
+        }
+        // อัปเดต customer เพื่อ track ยอดที่ชำระแล้ว
         const updatedCustomers = customers.map(c => c.id === payModal.customerId ? {
           ...c,
           receivableOpeningPaid: (Number(c.receivableOpeningPaid) || 0) + addedPaid,
           receivableOpeningPayments: [...(c.receivableOpeningPayments || []), ...cleaned],
         } : c);
         setCustomers(updatedCustomers);
-        // save ทันทีไป Supabase
         const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
         if (updatedC) saveToSupabase('customers', [updatedC]);
-        // สร้าง deposit record เพื่อให้ปรากฏใน statement และแดชบอร์ดเงินหมุน
-        cleaned.forEach(p => {
-          const depId = "DEP-OPR-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
-          const dep = {
-            id: depId,
-            date: p.date || ts.slice(0, 10),
-            customerId: payModal.customerId,
-            amount: p.amount,
-            method: p.method || "โอนเงิน",
-            toStoreBankId: p.toStoreBankId || "",
-            note: `รับชำระลูกหนี้ยกมา — ${customers.find(c => c.id === payModal.customerId)?.name || payModal.customerId}`,
-            type: "receivable_opening",
-            updated_at: ts,
-          };
-          setDeposits(prev => [...(prev || []), dep]);
-        });
       }
     } else if (payModal.kind === "purchase") {
       setPurchases(purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po));
