@@ -6617,10 +6617,13 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       if (amt <= 0) return;
       const vid = `OPENING-REC-${c.id}`;
       const paid = Number(c.receivableOpeningPaid) || 0;
-      const remaining = amt - paid;
+      // ถ้า amt = 0 แต่มีการชำระ แสดงว่ายอดยกมาถูกล้างออก ใช้ paid เป็น total แทน
+      const total = amt > 0 ? amt : paid;
+      const remaining = Math.max(0, total - paid);
       const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
-      // แสดงทุก status (รวมที่ชำระครบแล้ว) เพื่อให้ปรากฏในแท็บรับชำระแล้ว
-      rows.push({ kind: "sale", id: vid, date: c.receivableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining: Math.max(0, remaining), payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.receivableOpeningPayments || [], vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
+      const payments = c.receivableOpeningPayments || [];
+      const latestDate = payments.length > 0 ? payments.reduce((m, p) => p.date > m ? p.date : m, payments[0].date) : (c.receivableOpeningDate || new Date().toISOString().slice(0, 10));
+      rows.push({ kind: "sale", id: vid, date: latestDate, customerId: c.id, total, paid, remaining, payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments, vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
     });
     return rows;
   }, [sales, customers]);
@@ -6905,6 +6908,28 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const kind = historyModal.kind;
     const newPayments = (historyModal.doc.payments || []).filter((_, i) => i !== idx);
     const ts = new Date().toISOString();
+
+    // กรณี opening row — อัปเดตใน customer
+    if (historyModal.isOpening) {
+      const customerId = historyModal.customerId;
+      const removedAmount = (historyModal.doc.payments || [])[idx]?.amount || 0;
+      if (kind === "sale") {
+        setCustomers(prev => prev.map(c => c.id === customerId ? {
+          ...c,
+          receivableOpeningPayments: newPayments,
+          receivableOpeningPaid: Math.max(0, (Number(c.receivableOpeningPaid) || 0) - Number(removedAmount)),
+        } : c));
+      } else {
+        setCustomers(prev => prev.map(c => c.id === customerId ? {
+          ...c,
+          payableOpeningPayments: newPayments,
+          payableOpeningPaid: Math.max(0, (Number(c.payableOpeningPaid) || 0) - Number(removedAmount)),
+        } : c));
+      }
+      setHistoryModal({ ...historyModal, doc: { ...historyModal.doc, payments: newPayments } });
+      return;
+    }
+
     let updatedItem;
     if (kind === "purchase") {
       updatedItem = { ...historyModal.doc, payments: newPayments, writeOff: false, updated_at: ts };
@@ -6919,7 +6944,6 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       setSales(prev => prev.map((inv) => inv.id === realId ? updatedItem : inv));
       saveToSupabase("sales", [updatedItem]);
     }
-    // อัปเดต historyModal ให้แสดงยอดใหม่
     setHistoryModal({ ...historyModal, doc: updatedItem });
   };
 
