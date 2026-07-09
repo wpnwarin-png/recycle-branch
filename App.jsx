@@ -6639,6 +6639,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   // ---------- รายการใบขายทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allSaleRows = useMemo(() => {
     const rows = sales
+      .filter((inv) => !inv._isOpeningRec && !inv._openingLabel && !inv.id.startsWith("OPENING-REC-"))
       .map((inv) => {
         const subtotal = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
         const ad = subtotal - (inv.discount || 0);
@@ -6657,8 +6658,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const openingSaleId = `OPENING-REC-${c.id}`;
       const openingSale = sales.find(s => s.id === openingSaleId);
       const paidFromSale = (openingSale?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      const paidFromCustomer = Number(c.receivableOpeningPaid) || 0;
-      const paid = Math.max(paidFromSale, paidFromCustomer);
+      // ใช้ยอดจาก sale record ถ้ามี ไม่งั้นใช้จาก customer
+      const paid = openingSale ? paidFromSale : (Number(c.receivableOpeningPaid) || 0);
       const payments = openingSale?.payments || c.receivableOpeningPayments || [];
       const total = amt;
       const remaining = Math.max(0, total - paid);
