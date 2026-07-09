@@ -6652,10 +6652,14 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     // เพิ่ม virtual row สำหรับลูกหนี้ยกมา (ค้างรับจากลูกค้า ก่อนเริ่มใช้ระบบ)
     customers.forEach(c => {
       const amt = Number(c.receivableOpening) || 0;
-      const paid = Number(c.receivableOpeningPaid) || 0;
-      const payments = c.receivableOpeningPayments || [];
-      // แสดงเฉพาะที่มียอดยกมาจริง (amt > 0) หรือยังมียอดค้างชำระ
       if (amt <= 0) return;
+      // นับยอดชำระจาก OPENING-SALE record (วิธีใหม่) หรือ customer field (วิธีเก่า)
+      const openingSaleId = `OPENING-SALE-${c.id}`;
+      const openingSale = sales.find(s => s.id === openingSaleId);
+      const paidFromSale = (openingSale?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const paidFromCustomer = Number(c.receivableOpeningPaid) || 0;
+      const paid = Math.max(paidFromSale, paidFromCustomer);
+      const payments = openingSale?.payments || c.receivableOpeningPayments || [];
       const total = amt;
       const remaining = Math.max(0, total - paid);
       const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
@@ -7015,6 +7019,12 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   const historyTotals = useMemo(() => {
     if (!historyModal) return null;
     const doc = historyModal.doc;
+    // opening rows — ใช้ total จาก historyModal โดยตรง
+    if (historyModal.isOpening) {
+      const total = historyModal.total || 0;
+      const paid = (doc.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      return { total, paid, remaining: Math.max(0, total - paid) };
+    }
     let total;
     if (historyModal.kind === "expense") {
       const items = (doc.items && doc.items.length > 0) ? doc.items : [{ amount: doc.amount, vatEnabled: doc.vatEnabled, whtRate: doc.whtRate }];
