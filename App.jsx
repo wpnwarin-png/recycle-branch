@@ -6857,18 +6857,25 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
       if (payModal.kind === "purchase") {
         // เจ้าหนี้ยกมา
-        setCustomers(customers.map(c => c.id === payModal.customerId ? {
+        const updatedCustomers = customers.map(c => c.id === payModal.customerId ? {
           ...c,
           payableOpeningPaid: (Number(c.payableOpeningPaid) || 0) + addedPaid,
           payableOpeningPayments: [...(c.payableOpeningPayments || []), ...cleaned],
-        } : c));
+        } : c);
+        setCustomers(updatedCustomers);
+        const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
+        if (updatedC) saveToSupabase('customers', [updatedC]);
       } else {
         // ลูกหนี้ยกมา — บันทึกใน customer และสร้าง deposit record เข้า statement
-        setCustomers(customers.map(c => c.id === payModal.customerId ? {
+        const updatedCustomers = customers.map(c => c.id === payModal.customerId ? {
           ...c,
           receivableOpeningPaid: (Number(c.receivableOpeningPaid) || 0) + addedPaid,
           receivableOpeningPayments: [...(c.receivableOpeningPayments || []), ...cleaned],
-        } : c));
+        } : c);
+        setCustomers(updatedCustomers);
+        // save ทันทีไป Supabase
+        const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
+        if (updatedC) saveToSupabase('customers', [updatedC]);
         // สร้าง deposit record เพื่อให้ปรากฏใน statement และแดชบอร์ดเงินหมุน
         cleaned.forEach(p => {
           const depId = "DEP-OPR-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
@@ -6955,19 +6962,25 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     if (historyModal.isOpening) {
       const customerId = historyModal.customerId;
       const removedAmount = (historyModal.doc.payments || [])[idx]?.amount || 0;
+      let updatedC;
       if (kind === "sale") {
-        setCustomers(prev => prev.map(c => c.id === customerId ? {
+        const updatedCustomers = customers.map(c => c.id === customerId ? {
           ...c,
           receivableOpeningPayments: newPayments,
           receivableOpeningPaid: Math.max(0, (Number(c.receivableOpeningPaid) || 0) - Number(removedAmount)),
-        } : c));
+        } : c);
+        setCustomers(updatedCustomers);
+        updatedC = updatedCustomers.find(c => c.id === customerId);
       } else {
-        setCustomers(prev => prev.map(c => c.id === customerId ? {
+        const updatedCustomers = customers.map(c => c.id === customerId ? {
           ...c,
           payableOpeningPayments: newPayments,
           payableOpeningPaid: Math.max(0, (Number(c.payableOpeningPaid) || 0) - Number(removedAmount)),
-        } : c));
+        } : c);
+        setCustomers(updatedCustomers);
+        updatedC = updatedCustomers.find(c => c.id === customerId);
       }
+      if (updatedC) saveToSupabase('customers', [updatedC]);
       setHistoryModal({ ...historyModal, doc: { ...historyModal.doc, payments: newPayments } });
       return;
     }
