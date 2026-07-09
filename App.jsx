@@ -2448,7 +2448,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     (prepayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0));
     (bankTransfers || []).forEach((t) => add(t.toBankId, Number(t.amount) || 0));
     // รับชำระลูกหนี้ยกมา — นับเข้า bankInflows ด้วย
-    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
+    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => {
+      console.log('[OpeningRec]', c.name, 'toStoreBankId:', p.toStoreBankId, 'amount:', p.amount);
+      add(p.toStoreBankId, Number(p.amount) || 0);
+    }));
+    console.log('[bankInflows result]', inn);
     return inn;
   }, [sales, bankTransfers, prepayments, customers]);
 
