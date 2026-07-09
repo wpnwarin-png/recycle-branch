@@ -2306,7 +2306,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
   // ---------- กรองรายการซื้อ/ขายตามช่วงเวลา ----------
   const filteredPurchases = purchases.filter((po) => po.status === "อนุมัติแล้ว" && inRange(po.date));
-  const filteredSales = sales.filter((inv) => inRange(inv.date));
+  const filteredSales = sales.filter((inv) => !inv.id.startsWith("OPENING-REC-") && !inv._isOpeningRec && inRange(inv.date));
 
   // มูลค่าซื้อ ก่อน VAT (ต้นทุนสินค้าที่ใช้คำนวณสต๊อก/กำไร)
   const totalPurchaseValue = filteredPurchases.reduce((sum, po) => sum + po.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0), 0);
@@ -5964,7 +5964,7 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
-  const filtered = sales.filter((inv) => inv.id.includes(search) || custName(inv.customerId).includes(search)).filter((inv) => (!dateFrom || (inv.date || "") >= dateFrom) && (!dateTo || (inv.date || "") <= dateTo)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));
+  const filtered = sales.filter((inv) => !inv.id.startsWith("OPENING-REC-") && !inv._isOpeningRec && !inv._openingLabel).filter((inv) => inv.id.includes(search) || custName(inv.customerId).includes(search)).filter((inv) => (!dateFrom || (inv.date || "") >= dateFrom) && (!dateTo || (inv.date || "") <= dateTo)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));
   const { paged, page, setPage, totalPages, total, start, end } = usePagination(filtered);
     
   const openAdd = () => { const _d2 = new Date().toISOString().slice(0, 10); setForm({ ...blankForm(), id: genId("INV", sales, _d2) }); setModal({ mode: "add" }); };
