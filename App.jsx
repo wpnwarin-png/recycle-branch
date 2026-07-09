@@ -5627,7 +5627,19 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
 
       {aggregates.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 10px" }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
+            <button style={{ ...btnPrimary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
+              const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
+              const grouped = {};
+              filteredAggregates.forEach((g) => { if (!grouped[g.saleId]) grouped[g.saleId] = []; grouped[g.saleId].push(g); });
+              Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true })).forEach(([saleId, items]) => {
+                rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
+                items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
+              });
+              exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
+            }}><FileSpreadsheet size={13} /> Excel</button>
+          </div>
           <SearchBar value={aggregateSearch} onChange={setAggregateSearch} placeholder="ค้นหาเลข Invoice หรือสินค้า..." />
           <Card>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -5650,7 +5662,8 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                   if (Object.keys(grouped).length === 0) return (
                     <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบรายการที่ค้นหา</td></tr>
                   );
-                  return Object.entries(grouped).map(([saleId, items]) => {
+                  // เรียงล่าสุดขึ้นก่อน
+                  return Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true })).map(([saleId, items]) => {
                     const totalValue = items.reduce((s, g) => s + g.value, 0);
                     const totalQty = items.reduce((s, g) => s + g.qty, 0);
                     const isExpanded = !!expandedGroups[saleId];
@@ -6614,15 +6627,16 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     // เพิ่ม virtual row สำหรับลูกหนี้ยกมา (ค้างรับจากลูกค้า ก่อนเริ่มใช้ระบบ)
     customers.forEach(c => {
       const amt = Number(c.receivableOpening) || 0;
-      if (amt <= 0) return;
-      const vid = `OPENING-REC-${c.id}`;
       const paid = Number(c.receivableOpeningPaid) || 0;
+      const payments = c.receivableOpeningPayments || [];
+      // แสดงเฉพาะที่มียอดและมีประวัติการชำระจริง
+      if (amt <= 0 && payments.length === 0) return;
       const total = amt > 0 ? amt : paid;
-      if (total <= 0) return; // ไม่มียอดเลย ข้ามไป
+      if (total <= 0) return;
       const remaining = Math.max(0, total - paid);
       const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
-      const payments = c.receivableOpeningPayments || [];
       const latestDate = payments.length > 0 ? payments.reduce((m, p) => p.date > m ? p.date : m, payments[0].date) : (c.receivableOpeningDate || new Date().toISOString().slice(0, 10));
+      const vid = `OPENING-REC-${c.id}`;
       rows.push({ kind: "sale", id: vid, date: latestDate, customerId: c.id, total, paid, remaining, payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments, vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
     });
     return rows;
