@@ -5627,81 +5627,106 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
 
       {aggregates.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
-            <button style={{ ...btnPrimary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
-              const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
-              const grouped = {};
-              filteredAggregates.forEach((g) => { if (!grouped[g.saleId]) grouped[g.saleId] = []; grouped[g.saleId].push(g); });
-              Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true })).forEach(([saleId, items]) => {
-                rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
-                items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
-              });
-              exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
-            }}><FileSpreadsheet size={13} /> Excel</button>
-          </div>
-          <SearchBar value={aggregateSearch} onChange={setAggregateSearch} placeholder="ค้นหาเลข Invoice หรือสินค้า..." />
-          <Card>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={thStyle}>เลข Invoice</th>
-                  <th style={thStyle}>สินค้าในใบขาย</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>จำนวนรวม</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ยใหม่</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  const grouped = {};
-                  filteredAggregates.forEach((g) => {
-                    if (!grouped[g.saleId]) grouped[g.saleId] = [];
-                    grouped[g.saleId].push(g);
-                  });
-                  if (Object.keys(grouped).length === 0) return (
-                    <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบรายการที่ค้นหา</td></tr>
-                  );
-                  // เรียงล่าสุดขึ้นก่อน
-                  return Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true })).map(([saleId, items]) => {
-                    const totalValue = items.reduce((s, g) => s + g.value, 0);
-                    const totalQty = items.reduce((s, g) => s + g.qty, 0);
-                    const isExpanded = !!expandedGroups[saleId];
-                    return (
-                      <React.Fragment key={saleId}>
-                        {/* แถวกลุ่ม — คลิกเพื่อ expand/collapse */}
-                        <tr
-                          onClick={() => toggleGroup(saleId)}
-                          style={{ background: "#f3f4f6", cursor: "pointer" }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "#e5e7eb"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "#f3f4f6"}
-                        >
-                          <td style={{ ...tdStyle, fontWeight: 700, color: "#534ab7", fontFamily: "'JetBrains Mono', monospace", display: "flex", alignItems: "center", gap: 6 }}>
-                            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                            {saleId}
-                          </td>
-                          <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>{items.length} รายการ</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{fmt(totalQty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#534ab7" }}>฿{fmt(totalValue)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#9ca3af" }}>—</td>
-                        </tr>
-                        {/* รายการสินค้า — แสดงเมื่อ expand */}
-                        {isExpanded && items.map((g) => (
-                          <tr key={`${g.saleId}__${g.productId}`} style={{ background: "#fafafa" }}>
-                            <td style={{ ...tdStyle, color: "#9ca3af", paddingLeft: 32 }}>↳</td>
-                            <td style={tdStyle}>{prodName(g.productId)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)} {prodUnit(g.productId)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(g.value)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#534ab7" }}>฿{fmt(g.avgCost)}</td>
-                          </tr>
-                        ))}
-                      </React.Fragment>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
-          </Card>
+          {(() => {
+            const grouped = {};
+            filteredAggregates.forEach((g) => { if (!grouped[g.saleId]) grouped[g.saleId] = []; grouped[g.saleId].push(g); });
+            const sortedEntries = Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true }));
+            const allIds = sortedEntries.map(([id]) => id);
+            const [selectedInvoices, setSelectedInvoices] = React.useState({});
+            const anySelected = allIds.some(id => selectedInvoices[id]);
+            const allSelected = allIds.length > 0 && allIds.every(id => selectedInvoices[id]);
+            return (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {anySelected && (
+                      <button style={{ ...btnPrimary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
+                        const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
+                        sortedEntries.filter(([id]) => selectedInvoices[id]).forEach(([saleId, items]) => {
+                          rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
+                          items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
+                        });
+                        exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
+                      }}><FileSpreadsheet size={13} /> Excel ({allIds.filter(id => selectedInvoices[id]).length})</button>
+                    )}
+                    {!anySelected && (
+                      <button style={{ ...btnSecondary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
+                        const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
+                        sortedEntries.forEach(([saleId, items]) => {
+                          rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
+                          items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
+                        });
+                        exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
+                      }}><FileSpreadsheet size={13} /> Excel (ทั้งหมด)</button>
+                    )}
+                  </div>
+                </div>
+                <SearchBar value={aggregateSearch} onChange={setAggregateSearch} placeholder="ค้นหาเลข Invoice หรือสินค้า..." />
+                <Card>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...thStyle, width: 40 }}>
+                          <input type="checkbox" checked={allSelected} onChange={e => {
+                            const next = {};
+                            allIds.forEach(id => { next[id] = e.target.checked; });
+                            setSelectedInvoices(next);
+                          }} style={{ width: 15, height: 15, accentColor: "#534ab7" }} />
+                        </th>
+                        <th style={thStyle}>เลข Invoice</th>
+                        <th style={thStyle}>สินค้าในใบขาย</th>
+                        <th style={{ ...thStyle, textAlign: "right" }}>จำนวนรวม</th>
+                        <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
+                        <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ยใหม่</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedEntries.length === 0 ? (
+                        <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบรายการที่ค้นหา</td></tr>
+                      ) : sortedEntries.map(([saleId, items]) => {
+                        const totalValue = items.reduce((s, g) => s + g.value, 0);
+                        const totalQty = items.reduce((s, g) => s + g.qty, 0);
+                        const isExp = !!expandedGroups[saleId];
+                        const isChecked = !!selectedInvoices[saleId];
+                        return (
+                          <React.Fragment key={saleId}>
+                            <tr style={{ background: isChecked ? "#eeedfe" : "#f3f4f6", cursor: "pointer" }}
+                              onMouseEnter={(e) => { if (!isChecked) e.currentTarget.style.background = "#e5e7eb"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = isChecked ? "#eeedfe" : "#f3f4f6"; }}>
+                              <td style={{ ...tdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                                <input type="checkbox" checked={isChecked} onChange={e => setSelectedInvoices(prev => ({ ...prev, [saleId]: e.target.checked }))}
+                                  style={{ width: 15, height: 15, accentColor: "#534ab7" }} />
+                              </td>
+                              <td style={{ ...tdStyle, fontWeight: 700, color: "#534ab7", fontFamily: "'JetBrains Mono', monospace" }} onClick={() => toggleGroup(saleId)}>
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  {isExp ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{saleId}
+                                </span>
+                              </td>
+                              <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }} onClick={() => toggleGroup(saleId)}>{items.length} รายการ</td>
+                              <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }} onClick={() => toggleGroup(saleId)}>{fmt(totalQty)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#534ab7" }} onClick={() => toggleGroup(saleId)}>฿{fmt(totalValue)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", color: "#9ca3af" }} onClick={() => toggleGroup(saleId)}>—</td>
+                            </tr>
+                            {isExp && items.map((g) => (
+                              <tr key={`${g.saleId}__${g.productId}`} style={{ background: isChecked ? "#f5f3ff" : "#fafafa" }}>
+                                <td style={tdStyle}></td>
+                                <td style={{ ...tdStyle, color: "#9ca3af", paddingLeft: 32 }}>↳</td>
+                                <td style={tdStyle}>{prodName(g.productId)}</td>
+                                <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)} {prodUnit(g.productId)}</td>
+                                <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(g.value)}</td>
+                                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#534ab7" }}>฿{fmt(g.avgCost)}</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </Card>
+              </>
+            );
+          })()}
         </div>
       )}
 
