@@ -6617,8 +6617,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       if (amt <= 0) return;
       const vid = `OPENING-REC-${c.id}`;
       const paid = Number(c.receivableOpeningPaid) || 0;
-      // ถ้า amt = 0 แต่มีการชำระ แสดงว่ายอดยกมาถูกล้างออก ใช้ paid เป็น total แทน
       const total = amt > 0 ? amt : paid;
+      if (total <= 0) return; // ไม่มียอดเลย ข้ามไป
       const remaining = Math.max(0, total - paid);
       const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
       const payments = c.receivableOpeningPayments || [];
@@ -6753,6 +6753,9 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       .filter((r) => r.id.includes(search) || rowSearchLabel(r).includes(search))
       .filter((r) => (!dateFrom || (r.date || "") >= dateFrom) && (!dateTo || (r.date || "") <= dateTo))
       .sort((a, b) => {
+        // opening rows ให้อยู่ด้านล่างสุดเสมอ
+        if (a.isOpening && !b.isOpening) return 1;
+        if (!a.isOpening && b.isOpening) return -1;
         if (a.date !== b.date) return a.date < b.date ? 1 : -1;
         return (b.id || "").localeCompare(a.id || "", undefined, { numeric: true });
       });
