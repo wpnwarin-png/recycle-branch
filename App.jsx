@@ -2246,8 +2246,8 @@ export default function App() {
         {tab === "prepayments" && <PrepaymentsTab customers={customers} setCustomers={setCustomers} prepayments={prepayments} setPrepayments={setPrepayments} sales={sales} storeBankAccounts={storeBankAccounts} />}
         {tab === "expenses" && <ExpensesTab expenses={expenses} setExpenses={setExpenses} storeBankAccounts={storeBankAccounts} loans={loans} setLoans={setLoans} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} companySettings={companySettings} customers={customers} />}
         {tab === "expenseCategories" && <ExpenseCategoriesTab expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} />}
-        {tab === "loans" && <LoansTab loans={loans} setLoans={setLoans} expenses={expenses} customers={customers} />}
-        {tab === "bankaccounts" && <StoreBankAccountsTab accounts={storeBankAccounts} setAccounts={setStoreBankAccounts} purchases={purchases} sales={sales} expenses={expenses} deposits={deposits} bankTransfers={bankTransfers} customers={customers} />}
+        {tab === "loans" && <LoansTab loans={loans} setLoans={setLoans} expenses={expenses} customers={customers} storeBankAccounts={storeBankAccounts} />}
+        {tab === "bankaccounts" && <StoreBankAccountsTab accounts={storeBankAccounts} setAccounts={setStoreBankAccounts} purchases={purchases} sales={sales} expenses={expenses} deposits={deposits} bankTransfers={bankTransfers} customers={customers} loans={loans} />}
         {tab === "banktransfer" && <BankTransferTab storeBankAccounts={storeBankAccounts} bankTransfers={bankTransfers} setBankTransfers={setBankTransfers} />}
         {tab === "assets" && <AssetsTab assets={assets} setAssets={setAssets} />}
         {tab === "settings" && <CompanySettingsTab settings={companySettings} setSettings={setCompanySettings} shopProfile={shopProfile} setShopProfile={setShopProfile} />}
@@ -2447,10 +2447,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     sales.forEach((inv) => (inv.payments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
     (prepayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0));
     (bankTransfers || []).forEach((t) => add(t.toBankId, Number(t.amount) || 0));
-    // รับชำระลูกหนี้ยกมา — นับเข้า bankInflows ด้วย
+    // รับชำระลูกหนี้ยกมา
     (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
+    // เงินกู้ยืม — นับยอดเงินต้นที่รับเข้าบัญชี
+    (loans || []).forEach((l) => { if (l.receivedBankId) add(l.receivedBankId, Number(l.principal) || 0); });
     return inn;
-  }, [sales, bankTransfers, prepayments, customers]);
+  }, [sales, bankTransfers, prepayments, customers, loans]);
 
 
   // ---------- ซื้อ/ขาย แบ่งตามประเภทสินค้า และแบ่งตามรายการสินค้า ----------
@@ -3429,6 +3431,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             bankInflowsRange[p.toStoreBankId] = (bankInflowsRange[p.toStoreBankId] || 0) + (Number(p.amount) || 0);
           }
         }));
+        // เงินกู้ยืม — นับยอดเงินต้นที่รับเข้าบัญชีตามวันที่เริ่มสัญญา
+        (loans || []).forEach((l) => {
+          if (l.receivedBankId && l.startDate && inRange(l.startDate)) {
+            bankInflowsRange[l.receivedBankId] = (bankInflowsRange[l.receivedBankId] || 0) + (Number(l.principal) || 0);
+          }
+        });
 
         const bankOutflowsRange = {};
         const addOutflowRange = (bankId, amount, date) => {
@@ -8296,24 +8304,25 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
 // ===================================================================
 // LOANS TAB (เงินกู้ยืม / เช่าซื้อ)
 // ===================================================================
-function LoansTab({ loans, setLoans, expenses, customers }) {
-  const [modal, setModal] = useState(null); // {mode:'add'|'edit'|'schedule', item}
+function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
+  const [modal, setModal] = useState(null);
 
   const blankForm = () => ({
     id: genId("CT", loans),
     billNo: "",
     name: "",
     type: LOAN_TYPES[0],
-    lenderCustomerId: "", // อ้างอิงลูกค้าจากฐานข้อมูล (ถ้ามี)
-    lender: "", // ชื่อผู้ให้กู้/ไฟแนนซ์ (พิมพ์เองได้ ถ้าไม่มีในฐานข้อมูลลูกค้า)
+    lenderCustomerId: "",
+    lender: "",
     principal: 0,
-    interestMode: "rate", // "rate" = % ต่อปี, "amount" = จำนวนเงินดอกเบี้ยรวมตลอดสัญญา
+    interestMode: "rate",
     annualInterestRate: 0,
     totalInterestAmount: 0,
     totalInstallments: 12,
     startDate: new Date().toISOString().slice(0, 10),
-    dueDayOfMonth: new Date().getDate(), // ครบกำหนดชำระทุกวันที่เท่าไรของเดือน (1-31)
-    paidInstallments: [], // [{no, expenseId, paidDate}]
+    dueDayOfMonth: new Date().getDate(),
+    paidInstallments: [],
+    receivedBankId: "", // บัญชีที่รับเงินกู้เข้า
   });
   const [form, setForm] = useState(blankForm());
 
@@ -8475,17 +8484,14 @@ function LoansTab({ loans, setLoans, expenses, customers }) {
               <input type="date" style={inputStyle} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
             </Field>
             <Field label="ครบกำหนดชำระทุกวันที่ (1-31) ของเดือน">
-              <input
-                type="number"
-                min={1}
-                max={31}
-                style={inputStyle}
-                value={form.dueDayOfMonth}
-                onChange={(e) => setForm({ ...form, dueDayOfMonth: e.target.value })}
-              />
-              <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, marginBottom: 0 }}>
-                * ถ้าวันที่เกินจำนวนวันในเดือนนั้น (เช่น 31 ในเดือน ก.พ.) ระบบจะใช้วันสุดท้ายของเดือนแทน
-              </p>
+              <input type="number" min={1} max={31} style={inputStyle} value={form.dueDayOfMonth} onChange={(e) => setForm({ ...form, dueDayOfMonth: e.target.value })} />
+              <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, marginBottom: 0 }}>* ถ้าวันที่เกินจำนวนวันในเดือนนั้น (เช่น 31 ในเดือน ก.พ.) ระบบจะใช้วันสุดท้ายของเดือนแทน</p>
+            </Field>
+            <Field label="บัญชีที่รับเงินกู้เข้า">
+              <select style={inputStyle} value={form.receivedBankId || ""} onChange={(e) => setForm({ ...form, receivedBankId: e.target.value })}>
+                <option value="">— ไม่ระบุ —</option>
+                {(storeBankAccounts || []).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
             </Field>
           </div>
 
@@ -9831,7 +9837,7 @@ function ExpenseCategoriesTab({ expenseCategories, setExpenseCategories, expense
 // ===================================================================
 // STORE BANK ACCOUNTS TAB (บัญชีธนาคารของร้าน)
 // ===================================================================
-function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expenses, deposits, bankTransfers, customers }) {
+function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expenses, deposits, bankTransfers, customers, loans }) {
   const [modal, setModal] = useState(null);
   const [statementModal, setStatementModal] = useState(null); // {account}
   const [stmtYear, setStmtYear] = useState(new Date().getFullYear());
@@ -9916,6 +9922,13 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
         const toAcc = (accounts || []).find((b) => b.id === t.toBankId);
         const toLabel = toAcc ? `${toAcc.bankName} ${toAcc.accountNo}` : "บัญชีอื่น";
         rows.push({ date: t.date, type: "โอนเงินออก", ref: t.id, description: `โอนไป ${toLabel}${t.note ? " — " + t.note : ""}`, debit: Number(t.amount) || 0, credit: 0 });
+      }
+    });
+
+    // เงินกู้ยืม — รับเงินต้นเข้าบัญชี ณ วันที่เริ่มสัญญา
+    (loans || []).forEach((l) => {
+      if (l.receivedBankId === acc.id && l.startDate && inRange(l.startDate)) {
+        rows.push({ date: l.startDate, type: "รับเงินกู้", ref: l.id, description: `รับเงินกู้ — ${l.name}${l.lender ? ` (${l.lender})` : ""}`, credit: Number(l.principal) || 0, debit: 0 });
       }
     });
 
