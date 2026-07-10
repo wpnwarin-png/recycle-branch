@@ -8490,7 +8490,7 @@ function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
             <Field label="บัญชีที่รับเงินกู้เข้า">
               <select style={inputStyle} value={form.receivedBankId || ""} onChange={(e) => setForm({ ...form, receivedBankId: e.target.value })}>
                 <option value="">— ไม่ระบุ —</option>
-                {(storeBankAccounts || []).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                {(storeBankAccounts || []).map(b => <option key={b.id} value={b.id}>{b.bankName} {b.accountNo}</option>)}
               </select>
             </Field>
           </div>
