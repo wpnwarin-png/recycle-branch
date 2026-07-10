@@ -3470,6 +3470,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               if (t.fromBankId === b.id && beforeDate(t.date)) bal -= Number(t.amount) || 0;
               if (t.toBankId === b.id && beforeDate(t.date)) bal += Number(t.amount) || 0;
             });
+            // เงินกู้ยืมที่รับเข้าบัญชีนี้ก่อนช่วงเวลา
+            (loans || []).forEach((l) => {
+              if (l.receivedBankId === b.id && l.startDate && beforeDate(l.startDate)) bal += Number(l.principal) || 0;
+            });
             beforeRangeBalance[b.id] = bal;
           });
         }
@@ -9934,13 +9938,19 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
 
     rows.sort((a, b) => a.date.localeCompare(b.date));
 
-    // คำนวณยอดคงเหลือ
+    // คำนวณยอดคงเหลือ — รวมเงินกู้ที่รับก่อน startDate เป็น opening balance
     let balance = Number(acc.openingBalance) || 0;
+    (loans || []).forEach((l) => {
+      if (l.receivedBankId === acc.id && l.startDate && l.startDate < startDate) {
+        balance += Number(l.principal) || 0;
+      }
+    });
+    const startBalance = balance;
     const withBalance = rows.map((r) => {
       balance += r.credit - r.debit;
       return { ...r, balance };
     });
-    return { rows: withBalance, startBalance: Number(acc.openingBalance) || 0, endBalance: balance };
+    return { rows: withBalance, startBalance, endBalance: balance };
   };
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
