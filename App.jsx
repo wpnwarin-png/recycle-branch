@@ -12,6 +12,32 @@ import {
 import { isSupabaseReady } from './supabase'
 import { useSupabaseSync, loadAllFromSupabase, useSyncStatus, saveToSupabase } from './useSupabaseSync'
 import { loadProducts, insertProduct, updateProduct, deleteProduct, useProductsRealtime } from './useProductsSync'
+// ---------- Hook: ตรวจสอบว่าหน้าจอเป็นมือถือหรือไม่ (responsive) ----------
+function useIsMobile(breakpoint = 700) {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" ? window.innerWidth < breakpoint : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < breakpoint);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [breakpoint]);
+  return isMobile;
+}
+
+// ---------- ลำดับประเภทสต็อก ----------
+const STOCK_TYPE_ORDER = [
+  "ทองแดง","ทองเหลือง","สแตนเลส","อลูมิเนียม","กระดาษ","แก้ว","ขวดลัง","พลาสติก","เหล็ก","PVC","น้ำมัน","อื่นๆ"
+];
+function sortStockGroups(groups) {
+  return [...groups].sort((a, b) => {
+    const ai = STOCK_TYPE_ORDER.indexOf(a.type);
+    const bi = STOCK_TYPE_ORDER.indexOf(b.type);
+    if (ai === -1 && bi === -1) return a.type.localeCompare(b.type, "th");
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+}
+
 // ---------- Seed data ----------
 const initialProducts = [];
  // ลูกค้าแต่ละคนสามารถมีบัญชีธนาคารได้หลายบัญชี: bankAccounts = [{id, bankName, accountNo, accountName}]
@@ -68,17 +94,6 @@ const BANK_NAMES = ["กสิกรไทย", "ไทยพาณิชย์"
 
 const fmt = (n) => Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtInt = (n) => Number(n || 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
-
-// ตรวจสอบว่าหน้าจอแคบ (มือถือ) เพื่อสลับ layout ฟอร์มรายการสินค้าเป็นแบบ card แนวตั้ง
-function useIsMobileView(breakpoint = 700) {
-  const [isMobile, setIsMobile] = React.useState(() => typeof window !== "undefined" && window.innerWidth < breakpoint);
-  React.useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < breakpoint);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [breakpoint]);
-  return isMobile;
-}
 // ปัดเศษสตางค์ของยอดเงินให้เป็นจำนวนเต็มบาท — ใช้ตอนกรอกยอดจ่าย/รับเงินจริง
 const roundUpAmount = (n) => Math.ceil(Number(n) || 0);
 const roundDownAmount = (n) => Math.floor(Number(n) || 0);
@@ -111,350 +126,6 @@ function exportImage(elementId, filename = "export.png") {
   printWindow.focus();
   printWindow.print();
   printWindow.close();
-}
-
-// ---------- LINE Share Utilities ----------
-// ฟังก์ชัน helper: โหลด html2canvas จาก CDN (ครั้งเดียว)
-async function loadHtml2Canvas() {
-  if (window.html2canvas) return true;
-  try {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload = resolve; s.onerror = reject;
-      document.head.appendChild(s);
-    });
-    return true;
-  } catch { return false; }
-}
-
-// capture element เป็น canvas โดย clone ไปวางใน off-screen container เพื่อหลีกเลี่ยง viewport clip บนมือถือ
-async function captureElementToCanvas(el, captureWidth) {
-  const ok = await loadHtml2Canvas();
-  if (!ok) return null;
-
-  // ใช้ scrollWidth จริงของ element แต่ไม่ต่ำกว่า 900px (เพื่อให้ตัวหนังสือชัดบนมือถือ) และไม่เกิน 1400
-  const elWidth = Math.max(el.scrollWidth, el.offsetWidth, 320);
-  const useWidth = captureWidth || Math.min(Math.max(elWidth, 900), 1400);
-
-  // clone และวางใน off-screen wrapper กว้าง captureWidth เพื่อให้ layout คำนวณใหม่เต็มความกว้าง
-  const wrapper = document.createElement("div");
-  wrapper.style.cssText = `
-    position: fixed; left: -99999px; top: 0;
-    width: ${useWidth}px; min-width: ${useWidth}px;
-    background: #ffffff; z-index: -1;
-    font-family: 'Noto Sans Thai', sans-serif;
-    overflow: visible;
-  `;
-  // sync ค่า React controlled inputs ลง DOM attribute ก่อน clone
-  // (React เก็บ value ใน .value property ไม่ใช่ attribute ทำให้ cloneNode ไม่ได้ค่า)
-  el.querySelectorAll("input, textarea, select").forEach(el => {
-    if (el.tagName === "SELECT") {
-      el.setAttribute("data-value", el.value);
-    } else {
-      el.setAttribute("value", el.value);
-    }
-  });
-
-  const clone = el.cloneNode(true);
-  clone.style.cssText += "; width: 100%; overflow: visible; max-width: none;";
-
-  // แทน input ทุกตัวใน clone ด้วย div แสดงค่า เพื่อให้ html2canvas capture ได้
-  clone.querySelectorAll("input").forEach(input => {
-    const val = input.getAttribute("value") || input.value || "";
-    const computed = window.getComputedStyle(input);
-    const div = document.createElement("div");
-    div.textContent = val;
-    div.style.width = computed.width;
-    div.style.minWidth = "40px";
-    div.style.height = computed.height;
-    div.style.padding = computed.padding;
-    div.style.fontSize = computed.fontSize;
-    div.style.fontFamily = computed.fontFamily;
-    div.style.border = computed.border;
-    div.style.borderRadius = computed.borderRadius;
-    div.style.background = computed.backgroundColor || "#fff";
-    div.style.color = "#111827";
-    div.style.display = "flex";
-    div.style.alignItems = "center";
-    div.style.justifyContent = input.style.textAlign === "right" ? "flex-end" : "flex-start";
-    div.style.boxSizing = "border-box";
-    input.parentNode.replaceChild(div, input);
-  });
-  // ปิด overflow ทุก node ใน clone
-  const walkOverflow = (node) => {
-    if (node.nodeType !== 1) return;
-    node.style.overflowX = "visible";
-    node.style.overflowY = "visible";
-    Array.from(node.children).forEach(walkOverflow);
-  };
-  walkOverflow(clone);
-  wrapper.appendChild(clone);
-  document.body.appendChild(wrapper);
-
-  // รอ 1 frame เพื่อให้ browser layout เสร็จ
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  let canvas = null;
-  try {
-    canvas = await window.html2canvas(clone, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#ffffff",
-      scrollX: 0,
-      scrollY: 0,
-      width: clone.scrollWidth,
-      height: clone.scrollHeight,
-      windowWidth: useWidth,
-    });
-  } finally {
-    document.body.removeChild(wrapper);
-  }
-  return canvas;
-}
-
-// แชร์รูป canvas → LINE (มือถือ) หรือดาวน์โหลด (คอม)
-async function shareCanvas(canvas, title) {
-  if (!canvas) return;
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  if (isMobile && navigator.share) {
-    canvas.toBlob(async (blob) => {
-      try {
-        const file = new File([blob], `${title}.png`, { type: "image/png" });
-        await navigator.share({ files: [file], title });
-      } catch {
-        const a = document.createElement("a");
-        a.href = canvas.toDataURL("image/png");
-        a.download = `${title}.png`;
-        a.click();
-      }
-    }, "image/png");
-  } else {
-    const a = document.createElement("a");
-    a.href = canvas.toDataURL("image/png");
-    a.download = `${title}.png`;
-    a.click();
-  }
-}
-
-// สร้าง HTML card style สวยงามจาก element (ดึง table data แล้ว render ใหม่)
-function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
-  const container = document.createElement("div");
-  container.style.cssText = `width:700px;background:#f5f5f5;padding:0;font-family:'Noto Sans Thai',Arial,sans-serif;`;
-
-  // header
-  const header = document.createElement("div");
-  header.style.cssText = `background:${themeColor};color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;`;
-  const titleEl = document.createElement("span");
-  titleEl.style.cssText = "font-size:16px;font-weight:700;";
-  titleEl.textContent = title;
-  header.appendChild(titleEl);
-  container.appendChild(header);
-
-  // body: ดึง tables จาก element มา render ใหม่ (ข้าม element ที่มี data-share-skip)
-  const body = document.createElement("div");
-  body.style.cssText = "padding:12px;display:flex;flex-direction:column;gap:12px;";
-
-  // เก็บเฉพาะ tables ที่ไม่อยู่ใน data-share-skip
-  const tables = Array.from(el.querySelectorAll("table")).filter(t => !t.closest("[data-share-skip]"));
-  // เพิ่ม summary card ด้านบน — ดึงจากแถว tfoot ของ table แรก
-  if (tables.length > 0) {
-    const firstTfoot = tables[tables.length - 1].querySelector("tfoot tr");
-    if (firstTfoot) {
-      const cells = firstTfoot.querySelectorAll("td");
-      if (cells.length >= 2) {
-        // หายอดรวมมูลค่า (คอลัมน์ที่ 2 ถ้ามี 3+ คอลัมน์)
-        const valueCell = cells.length >= 3 ? cells[1] : cells[cells.length - 1];
-        const totalValue = valueCell.textContent.trim();
-        const summaryCard = document.createElement("div");
-        summaryCard.style.cssText = "background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:4px;";
-        summaryCard.innerHTML = `
-          <div style="font-size:13px;color:#6b7280;margin-bottom:6px;">มูลค่ารวมทั้งหมด</div>
-          <div style="font-size:32px;font-weight:900;color:${themeColor};line-height:1;">${totalValue}</div>
-          <div style="font-size:12px;color:#9ca3af;margin-top:4px;">บาท</div>
-        `;
-        body.appendChild(summaryCard);
-      }
-    }
-  }
-
-  tables.forEach(tbl => {
-    const card = document.createElement("div");
-    card.style.cssText = "background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
-
-    const newTbl = document.createElement("table");
-    newTbl.style.cssText = "width:100%;border-collapse:collapse;";
-
-    tbl.querySelectorAll("thead tr").forEach(row => {
-      const thead = document.createElement("thead");
-      const tr = document.createElement("tr");
-      tr.style.cssText = `background:${themeColor}22;border-bottom:2px solid ${themeColor};`;
-      row.querySelectorAll("th").forEach(th => {
-        const ntd = document.createElement("th");
-        ntd.style.cssText = `padding:9px 14px;font-size:14px;font-weight:700;color:${themeColor};text-align:${th.style.textAlign || "left"};`;
-        ntd.textContent = th.textContent.trim();
-        tr.appendChild(ntd);
-      });
-      thead.appendChild(tr);
-      newTbl.appendChild(thead);
-    });
-
-    const tbody = document.createElement("tbody");
-    tbl.querySelectorAll("tbody tr").forEach((row, idx) => {
-      const tr = document.createElement("tr");
-      tr.style.cssText = `background:${idx % 2 === 0 ? "#fff" : "#fafafa"};border-bottom:1px solid #f0f0f0;`;
-      row.querySelectorAll("td").forEach(td => {
-        const ntd = document.createElement("td");
-        const align = td.style.textAlign || (td.querySelector("[style*='right']") ? "right" : "left");
-        const isValue = td.style.color?.includes("6B35") || td.style.color?.includes("blue") || td.style.color?.includes("5fa5") || (td.style.color && td.style.color !== "");
-        const text = td.textContent.trim();
-        const looksLikeMoney = /^[฿-]?[\d,]+(\.\d+)?$/.test(text.replace(/,/g, "").replace("฿", ""));
-        ntd.style.cssText = `padding:8px 14px;font-size:15px;text-align:${align};color:${looksLikeMoney && text.includes("฿") ? "#c0392b" : "#333"};`;
-        ntd.textContent = text;
-        tr.appendChild(ntd);
-      });
-      tbody.appendChild(tr);
-    });
-    newTbl.appendChild(tbody);
-
-    tbl.querySelectorAll("tfoot tr").forEach(row => {
-      const tfoot = document.createElement("tfoot");
-      const tr = document.createElement("tr");
-      tr.style.cssText = `background:${themeColor};`;
-      row.querySelectorAll("td").forEach((td, i) => {
-        const ntd = document.createElement("td");
-        const align = td.style.textAlign || (i > 0 ? "right" : "left");
-        const text = td.textContent.trim();
-        const isValueCol = i >= 1;
-        ntd.style.cssText = `padding:9px 14px;font-size:15px;font-weight:700;color:${isValueCol ? "#f4c07a" : "#fff"};text-align:${align};`;
-        ntd.textContent = text;
-        tr.appendChild(ntd);
-      });
-      tfoot.appendChild(tr);
-      newTbl.appendChild(tfoot);
-    });
-
-    card.appendChild(newTbl);
-    body.appendChild(card);
-  });
-
-  // ถ้าไม่มี table ให้ใช้ text แบบ list
-  if (tables.length === 0) {
-    const rows = el.querySelectorAll("[style*='display: flex'], [style*='display:flex']");
-    const listDiv = document.createElement("div");
-    listDiv.style.cssText = "background:#fff;border-radius:8px;padding:12px 16px;";
-    rows.forEach((row, idx) => {
-      if (row.children.length < 2) return;
-      const item = document.createElement("div");
-      item.style.cssText = `display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f0f0;background:${idx%2===0?"#fff":"#fafafa"};`;
-      const label = document.createElement("span");
-      label.style.cssText = "font-size:15px;color:#333;font-weight:" + (row.style.fontWeight || "400");
-      label.textContent = row.children[0]?.textContent?.trim() || "";
-      const val = document.createElement("span");
-      val.style.cssText = "font-size:15px;font-weight:600;color:#1a6b35;";
-      val.textContent = row.children[row.children.length-1]?.textContent?.trim() || "";
-      item.appendChild(label);
-      item.appendChild(val);
-      listDiv.appendChild(item);
-    });
-    body.appendChild(listDiv);
-  }
-
-  container.appendChild(body);
-  return container;
-}
-
-// แปลง DOM element เป็นรูปภาพแล้วแชร์ LINE (มือถือ) หรือดาวน์โหลด (คอม)
-async function shareElementToLine(elementId, title = "แชร์", themeColor) {
-  const el = document.getElementById(elementId);
-  if (!el) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
-  try {
-    const ok = await loadHtml2Canvas();
-    if (!ok) throw new Error("no html2canvas");
-
-    // ตรวจ theme color จาก header ของ element
-    const headerEl = el.querySelector("[style*='background']");
-    const autoColor = themeColor || "#1a2744";
-
-    const container = buildBeautifulHtml(el, title, autoColor);
-    container.style.cssText += ";position:fixed;left:-99999px;top:0;";
-    document.body.appendChild(container);
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    let canvas;
-    try {
-      canvas = await window.html2canvas(container, {
-        scale: 2, useCORS: true, backgroundColor: "#f5f5f5",
-        width: 700, height: container.scrollHeight, windowWidth: 700,
-      });
-    } finally {
-      document.body.removeChild(container);
-    }
-    if (canvas) await shareCanvas(canvas, title);
-  } catch(e) {
-    // fallback: text
-    const txt = (el.innerText || "").slice(0, 500);
-    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(title + "\n" + txt)}`, "_blank");
-  }
-}
-
-// ปุ่ม LINE ขนาดเล็ก (ใช้ใน ExportToolbar และหัวกล่อง)
-function LineShareButton({ elementId, title = "แชร์", small = false, themeColor, onClickOverride }) {
-  const [loading, setLoading] = React.useState(false);
-  return (
-    <button
-      onClick={async () => {
-        setLoading(true);
-        if (onClickOverride) await onClickOverride();
-        else await shareElementToLine(elementId, title, themeColor);
-        setLoading(false);
-      }}
-      disabled={loading}
-      title="แชร์ LINE"
-      style={{
-        display: "flex", alignItems: "center", gap: small ? 3 : 4,
-        padding: small ? "3px 8px" : "5px 10px",
-        borderRadius: 6, border: "none",
-        background: loading ? "#9ca3af" : "#06C755",
-        color: "#fff", cursor: loading ? "not-allowed" : "pointer",
-        fontSize: small ? 11 : 12, fontWeight: 600,
-        boxShadow: "0 1px 3px rgba(6,199,85,0.3)",
-        transition: "background 0.15s",
-        whiteSpace: "nowrap",
-      }}
-    >
-      <svg width={small ? 12 : 14} height={small ? 12 : 14} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
-      </svg>
-      {loading ? "กำลังสร้างรูป..." : "LINE"}
-    </button>
-  );
-}
-
-// แชร์หลาย element รวมกันเป็นรูปเดียว (vertical stack)
-async function shareMultipleElementsToLine(elementIds, title = "แชร์") {
-  const els = elementIds.map(id => document.getElementById(id)).filter(Boolean);
-  if (els.length === 0) { alert("ไม่พบข้อมูลที่จะแชร์"); return; }
-
-  const ok = await loadHtml2Canvas();
-  if (!ok) { alert("ไม่สามารถโหลด html2canvas ได้"); return; }
-
-  // capture แต่ละ element ผ่าน off-screen clone แล้ว stack แนวตั้ง
-  const canvases = (await Promise.all(els.map(el => captureElementToCanvas(el)))).filter(Boolean);
-  if (canvases.length === 0) return;
-
-  const totalWidth = Math.max(...canvases.map(c => c.width));
-  const totalHeight = canvases.reduce((s, c) => s + c.height + 24, 0);
-  const combined = document.createElement("canvas");
-  combined.width = totalWidth;
-  combined.height = totalHeight;
-  const ctx = combined.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, totalWidth, totalHeight);
-  let y = 0;
-  canvases.forEach(c => { ctx.drawImage(c, 0, y); y += c.height + 24; });
-
-  await shareCanvas(combined, title);
 }
 
 // Print current page as PDF (via browser print dialog)
@@ -498,14 +169,14 @@ function printAsPDF(elementId, title = "") {
     .toolbar .zoom-controls { display: flex; align-items: center; gap: 6px; }
     .toolbar .zoom-controls button { background: #374151; color: #fff; border: none; width: 32px; height: 32px; border-radius: 6px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
     .toolbar .zoom-controls span { font-size: 13px; min-width: 44px; text-align: center; }
-    .toolbar .print-btn { background: #1A5C2A; color: #fff; border: none; padding: 8px 18px; border-radius: 6px; font-size: 13px; cursor: pointer; font-family: 'Noto Sans Thai', sans-serif; white-space: nowrap; }
+    .toolbar .print-btn { background: #1B3A6B; color: #fff; border: none; padding: 8px 18px; border-radius: 6px; font-size: 13px; cursor: pointer; font-family: 'Noto Sans Thai', sans-serif; white-space: nowrap; }
     .page-wrap { padding: 20px 16px; display: flex; justify-content: center; }
     .page { background: #fff; width: 210mm; padding: 10mm; box-shadow: 0 2px 16px rgba(0,0,0,0.15); font-size: 11px; color: #1f2937; transform-origin: top center; transition: transform 0.15s; }
     table { border-collapse: collapse; width: 100%; page-break-inside: auto; }
     td, th { border: 1px solid #ddd; padding: 4px 6px; font-size: 10px; }
     th { background: #f3f4f6; font-weight: 700; }
     tr:nth-child(even) { background: #f9f9f9; }
-    tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #083319; }
+    tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #0A1E3D; }
     img { max-width: 100%; }
     button { display: none !important; }
     .toolbar button, .toolbar .print-btn { display: flex !important; }
@@ -572,7 +243,7 @@ table { border-collapse: collapse; width: 100%; page-break-inside: auto; table-l
 td, th { border: 1px solid #ddd; padding: 4px 6px; font-size: 10px; word-break: break-word; overflow-wrap: break-word; }
 th { background: #f3f4f6; font-weight: 700; }
 tr:nth-child(even) { background: #f9f9f9; }
-tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #083319; }
+tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #0A1E3D; }
 img { max-width: 100%; }
 button { display: none !important; }
 thead { display: table-header-group; }
@@ -613,7 +284,7 @@ tr, td, th { -webkit-print-color-adjust: exact !important; print-color-adjust: e
         #print-preview-content td, #print-preview-content th { border: 1px solid #ddd; padding: 4px 6px; font-size: 10px; }
         #print-preview-content th { background: #f3f4f6; font-weight: 700; }
         #print-preview-content tr:nth-child(even) { background: #f9f9f9; }
-        #print-preview-content tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #083319; }
+        #print-preview-content tfoot td { font-weight: 700; background: #f3f4f6; border-top: 2px solid #0A1E3D; }
         #print-preview-content img { max-width: 100%; }
         #print-preview-content button { display: none !important; }
         #print-preview-content tr, #print-preview-content td, #print-preview-content th {
@@ -645,8 +316,8 @@ function ConfirmDialog({ pending, onClose }) {
   return (
     <Modal title={pending.title || "ยืนยันการลบ"} onClose={onClose} zIndex={200}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0 16px" }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#E8F5EC", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Trash2 size={18} color="#1A6B35" />
+        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#E8EEF8", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Trash2 size={18} color="#1E4D8C" />
         </div>
         <p style={{ margin: 0, fontSize: 14, color: "#374151", lineHeight: 1.6 }}>{pending.message}</p>
       </div>
@@ -690,22 +361,531 @@ function handleEnterNavigate(e, onSubmit) {
     onSubmit();
   }
 }
-// ExportToolbar component — renders export buttons for a section
-function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = null, lineTitle = "", lineThemeColor }) {
+// ===== LINE Share Utilities =====
+const LINE_GREEN = "#06C755";
+const LINE_SVG_PATH = "M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.630 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.630 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.630-.63.345 0 .63.285.63.630v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.630v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.630-.63.348 0 .630.285.630.630v4.141h1.756c.348 0 .629.283.629.630 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314";
+
+async function shareTableImage({ title, subtitle = "", headers = [], rows = [], footerRow = null, accentColor = "#0A1E3D", filename = "สรุป.png" }) {
+  const DPR = 3;
+  const W = 900;
+  const PAD = 28;
+  const TITLE_H = 72;
+  const HEAD_H = 48;
+  const ROW_H = 44;
+  const FOOTER_H = footerRow ? 52 : 0;
+  const BOTTOM_PAD = 24;
+  const H = TITLE_H + HEAD_H + rows.length * ROW_H + FOOTER_H + BOTTOM_PAD;
+
+  const COL_COUNT = headers.length;
+  // คอลัมน์แรกกว้างกว่า ที่เหลือเท่ากัน
+  const NUM_COL_W = 160;
+  const FIRST_COL_W = W - (COL_COUNT - 1) * NUM_COL_W - PAD * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
+
+  const FONT = "'Noto Sans Thai', 'Sarabun', 'Prompt', sans-serif";
+  const fmtN = (n) => typeof n === "number"
+    ? n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : String(n != null ? n : "");
+
+  const colX = (ci) => {
+    if (ci === 0) return PAD;
+    return PAD + FIRST_COL_W + (ci - 1) * NUM_COL_W;
+  };
+  const colW = (ci) => ci === 0 ? FIRST_COL_W : NUM_COL_W;
+
+  // helper: rounded rect
+  const roundRect = (x, y, w, h, r) => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  };
+
+  // --- พื้นหลัง ---
+  ctx.fillStyle = "#f0f4f8";
+  ctx.fillRect(0, 0, W, H);
+
+  // --- Title bar (gradient simulation) ---
+  const grad = ctx.createLinearGradient(0, 0, W, TITLE_H);
+  grad.addColorStop(0, accentColor);
+  grad.addColorStop(1, accentColor + "cc");
+  roundRect(0, 0, W, TITLE_H, 0);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // accent stripe ซ้าย
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.fillRect(0, 0, 6, TITLE_H);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold 26px ${FONT}`;
+  ctx.textAlign = "left";
+  ctx.fillText(title, PAD + 8, TITLE_H / 2 + 2);
+  if (subtitle) {
+    ctx.font = `14px ${FONT}`;
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.fillText(subtitle, PAD + 8, TITLE_H / 2 + 22);
+  }
+
+  // --- Column header ---
+  let y = TITLE_H;
+  ctx.fillStyle = "#1E3A5F";
+  ctx.fillRect(0, y, W, HEAD_H);
+
+  // header separator line bottom
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  ctx.fillRect(0, y + HEAD_H - 2, W, 2);
+
+  headers.forEach((h, ci) => {
+    const isNum = ci > 0;
+    ctx.fillStyle = "#c8d8f0";
+    ctx.font = `bold 14px ${FONT}`;
+    ctx.textAlign = isNum ? "right" : "left";
+    const tx = isNum ? colX(ci) + colW(ci) - 10 : colX(ci) + 4;
+    ctx.fillText(h, tx, y + HEAD_H / 2 + 5);
+  });
+  ctx.textAlign = "left";
+
+  // --- Data rows ---
+  y += HEAD_H;
+  rows.forEach((row, ri) => {
+    const isSubItem = typeof row[0] === "string" && row[0].startsWith("  -");
+    const bg = isSubItem
+      ? (ri % 2 === 0 ? "#eef3f9" : "#e6ecf5")
+      : (ri % 2 === 0 ? "#ffffff" : "#f4f7fb");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, y, W, ROW_H);
+
+    // ขีดแบ่งแถว
+    ctx.strokeStyle = "#dde5f0";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(PAD, y + ROW_H);
+    ctx.lineTo(W - PAD, y + ROW_H);
+    ctx.stroke();
+
+    row.forEach((val, ci) => {
+      const isNum = ci > 0;
+      const isHeader = typeof val === "string" && val.startsWith("▶");
+      const isSub = typeof val === "string" && val.startsWith("  -");
+      const display = typeof val === "number"
+        ? (val < 0 ? "(" + fmtN(Math.abs(val)) + ")" : fmtN(val))
+        : String(val != null ? val : "");
+
+      // สีตามประเภทแถว
+      if (ci === 0) {
+        ctx.fillStyle = isHeader ? accentColor : isSub ? "#4a5568" : "#1a2a4a";
+        ctx.font = isHeader ? `bold 15px ${FONT}` : isSub ? `13px ${FONT}` : `600 14px ${FONT}`;
+      } else if (ci === row.length - 1) {
+        ctx.fillStyle = val < 0 ? "#c53030" : "#1a4a8c";
+        ctx.font = `600 14px ${FONT}`;
+      } else {
+        ctx.fillStyle = "#374151";
+        ctx.font = `14px ${FONT}`;
+      }
+
+      ctx.textAlign = isNum ? "right" : "left";
+      const tx = isNum ? colX(ci) + colW(ci) - 10 : colX(ci) + (isSub ? 16 : 4);
+      ctx.fillText(display, tx, y + ROW_H / 2 + 5);
+    });
+    ctx.textAlign = "left";
+    y += ROW_H;
+  });
+
+  // --- Footer ---
+  if (footerRow) {
+    // gradient footer
+    const fgrad = ctx.createLinearGradient(0, y, W, y + FOOTER_H);
+    fgrad.addColorStop(0, accentColor);
+    fgrad.addColorStop(1, accentColor + "dd");
+    ctx.fillStyle = fgrad;
+    ctx.fillRect(0, y, W, FOOTER_H);
+
+    // top border highlight
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.fillRect(0, y, W, 2);
+
+    footerRow.forEach((val, ci) => {
+      const isNum = ci > 0;
+      const display = typeof val === "number" ? fmtN(val) : String(val != null ? val : "");
+      ctx.fillStyle = "#fff";
+      ctx.font = `bold 16px ${FONT}`;
+      ctx.textAlign = isNum ? "right" : "left";
+      const tx = isNum ? colX(ci) + colW(ci) - 10 : colX(ci) + 4;
+      ctx.fillText(display, tx, y + FOOTER_H / 2 + 5);
+    });
+    ctx.textAlign = "left";
+  }
+
+  // --- Bottom padding ---
+  // watermark เบาๆ
+  ctx.fillStyle = "rgba(0,0,0,0.08)";
+  ctx.font = `11px ${FONT}`;
+  ctx.textAlign = "right";
+  ctx.fillText(new Date().toLocaleDateString("th-TH"), W - PAD, H - 6);
+  ctx.textAlign = "left";
+
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      const file = new File([blob], filename, { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title }); } catch {}
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        alert("💾 บันทึกรูปแล้ว!\nกรุณาเปิด LINE แล้วแนบรูปจากคลังรูปภาพได้เลยครับ");
+      }
+      resolve();
+    }, "image/png");
+  });
+}
+
+// ===== แชร์สต็อกแบบ card ต่อประเภท (ตามตัวอย่าง) =====
+async function shareStockCards({ title, subtitle, groups, filename }) {
+  const DPR = 3;
+  const W = 780;
+  const PAD = 24;
+  const FONT = "'Noto Sans Thai', 'Sarabun', 'Prompt', sans-serif";
+  const fmtN = (n) => typeof n === "number"
+    ? n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : String(n != null ? n : "");
+
+  // --- คำนวณความสูงทั้งหมดก่อน ---
+  const TITLE_H = 64;
+  const GROUP_HEADER_H = 42;
+  const COL_HEADER_H = 36;
+  const ROW_H = 40;
+  const GROUP_FOOTER_H = 40;
+  const GROUP_GAP = 14;
+
+  let totalH = TITLE_H + PAD;
+  groups.forEach(g => {
+    totalH += GROUP_HEADER_H + COL_HEADER_H + g.items.length * ROW_H + GROUP_FOOTER_H + GROUP_GAP;
+  });
+  totalH += PAD;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = totalH * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
+
+  // คอลัมน์ (รายการสินค้า | คงเหลือ | มูลค่า | ราคาเฉลี่ย)
+  const COL = {
+    name: { x: PAD + 12, w: 300 },
+    qty:  { x: PAD + 312, w: 120, align: "right" },
+    val:  { x: PAD + 432, w: 150, align: "right" },
+    avg:  { x: PAD + 582, w: 120, align: "right" },
+  };
+
+  const drawText = (text, x, y, opts = {}) => {
+    ctx.font = `${opts.bold ? "bold " : opts.semi ? "600 " : ""}${opts.size || 13}px ${FONT}`;
+    ctx.fillStyle = opts.color || "#1a2a4a";
+    ctx.textAlign = opts.align || "left";
+    ctx.fillText(String(text), x, y);
+    ctx.textAlign = "left";
+  };
+
+  // พื้นหลัง
+  ctx.fillStyle = "#f0f2f5";
+  ctx.fillRect(0, 0, W, totalH);
+
+  // Title bar
+  const titleGrad = ctx.createLinearGradient(0, 0, W, TITLE_H);
+  titleGrad.addColorStop(0, "#6b1f1f");
+  titleGrad.addColorStop(1, "#8b2a2a");
+  ctx.fillStyle = titleGrad;
+  ctx.fillRect(0, 0, W, TITLE_H);
+  // icon circle
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  ctx.beginPath(); ctx.arc(PAD + 18, TITLE_H / 2, 16, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = `18px ${FONT}`; ctx.textAlign = "center";
+  ctx.fillText("📦", PAD + 18, TITLE_H / 2 + 6); ctx.textAlign = "left";
+
+  drawText(title, PAD + 44, TITLE_H / 2 + 2, { bold: true, size: 18, color: "#fff" });
+  drawText(subtitle, PAD + 44, TITLE_H / 2 + 20, { size: 12, color: "rgba(255,255,255,0.7)" });
+
+  let y = TITLE_H + PAD;
+
+  groups.forEach((g, gi) => {
+    const groupColors = ["#6b1f1f","#1a3a5c","#1a4a2a","#4a2a1a","#2a1a4a","#1a4a4a","#4a3a1a","#3a1a4a"];
+    const gc = groupColors[gi % groupColors.length];
+
+    // Group card background
+    ctx.fillStyle = "#ffffff";
+    ctx.shadowColor = "rgba(0,0,0,0.08)";
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 2;
+    const cardH = GROUP_HEADER_H + COL_HEADER_H + g.items.length * ROW_H + GROUP_FOOTER_H;
+    ctx.beginPath();
+    ctx.roundRect(PAD - 8, y, W - (PAD - 8) * 2, cardH, 10);
+    ctx.fill();
+    ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+    // Group header
+    ctx.fillStyle = gc;
+    ctx.beginPath();
+    ctx.roundRect(PAD - 8, y, W - (PAD - 8) * 2, GROUP_HEADER_H, [10, 10, 0, 0]);
+    ctx.fill();
+
+    // diamond icon
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = `12px ${FONT}`; ctx.textAlign = "left";
+    ctx.fillText("◆", PAD + 2, y + GROUP_HEADER_H / 2 + 5);
+    drawText(g.type, PAD + 22, y + GROUP_HEADER_H / 2 + 5, { bold: true, size: 15, color: "#fff" });
+    y += GROUP_HEADER_H;
+
+    // Column headers
+    ctx.fillStyle = "#f5f7fa";
+    ctx.fillRect(PAD - 8, y, W - (PAD - 8) * 2, COL_HEADER_H);
+    ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(PAD - 8, y + COL_HEADER_H); ctx.lineTo(W - PAD + 8, y + COL_HEADER_H); ctx.stroke();
+
+    const colHY = y + COL_HEADER_H / 2 + 5;
+    drawText("รายการสินค้า", COL.name.x, colHY, { bold: true, size: 12, color: "#64748b" });
+    drawText("คงเหลือ", COL.qty.x + COL.qty.w, colHY, { bold: true, size: 12, color: "#64748b", align: "right" });
+    drawText("มูลค่า", COL.val.x + COL.val.w, colHY, { bold: true, size: 12, color: "#64748b", align: "right" });
+    drawText("ราคาเฉลี่ย", COL.avg.x + COL.avg.w, colHY, { bold: true, size: 12, color: "#64748b", align: "right" });
+    y += COL_HEADER_H;
+
+    // Items
+    g.items.forEach((item, ii) => {
+      const rowBg = ii % 2 === 0 ? "#ffffff" : "#f8fafc";
+      ctx.fillStyle = rowBg;
+      ctx.fillRect(PAD - 8, y, W - (PAD - 8) * 2, ROW_H);
+
+      // separator
+      ctx.strokeStyle = "#edf2f7"; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(PAD, y + ROW_H); ctx.lineTo(W - PAD, y + ROW_H); ctx.stroke();
+
+      const ry = y + ROW_H / 2 + 5;
+      drawText(item.name, COL.name.x, ry, { size: 13, color: "#2d3748" });
+      drawText(`${fmtN(item.qty)} กก.`, COL.qty.x + COL.qty.w, ry, { size: 13, color: "#374151", align: "right" });
+
+      // มูลค่าสีแดงเข้ม
+      ctx.font = `600 13px ${FONT}`; ctx.textAlign = "right";
+      ctx.fillStyle = "#b91c1c";
+      ctx.fillText(`฿${fmtN(item.totalCost)}`, COL.val.x + COL.val.w, ry);
+      ctx.textAlign = "left";
+
+      drawText(fmtN(item.avgCost), COL.avg.x + COL.avg.w, ry, { size: 13, color: "#374151", align: "right" });
+      y += ROW_H;
+    });
+
+    // Group footer (รวม)
+    ctx.fillStyle = "#1a2a4a";
+    ctx.beginPath();
+    ctx.roundRect(PAD - 8, y, W - (PAD - 8) * 2, GROUP_FOOTER_H, [0, 0, 10, 10]);
+    ctx.fill();
+
+    const fy = y + GROUP_FOOTER_H / 2 + 5;
+    drawText("รวม", COL.name.x, fy, { bold: true, size: 14, color: "#fff" });
+    drawText(fmtN(g.qty), COL.qty.x + COL.qty.w, fy, { bold: true, size: 14, color: "#fff", align: "right" });
+    ctx.font = `bold 14px ${FONT}`; ctx.textAlign = "right";
+    ctx.fillStyle = "#fca5a5";
+    ctx.fillText(`฿${fmtN(g.value)}`, COL.val.x + COL.val.w, fy);
+    ctx.textAlign = "left";
+    drawText(fmtN(g.avgCost), COL.avg.x + COL.avg.w, fy, { bold: true, size: 14, color: "#e2e8f0", align: "right" });
+    y += GROUP_FOOTER_H + GROUP_GAP;
+  });
+
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      const file = new File([blob], filename, { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title }); } catch {}
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        alert("💾 บันทึกรูปแล้ว!\nกรุณาเปิด LINE แล้วแนบรูปจากคลังรูปภาพได้เลยครับ");
+      }
+      resolve();
+    }, "image/png");
+  });
+}
+
+
+function LineShareBtn({ onClick, style = {} }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+    <button onClick={onClick} title="แชร์ไป LINE" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: "none", background: LINE_GREEN, cursor: "pointer", fontSize: 11, color: "#fff", fontWeight: 600, flexShrink: 0, ...style }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d={LINE_SVG_PATH} /></svg>
+      LINE
+    </button>
+  );
+}
+
+async function shareCreditSummaryImage({ creditDate, dayCost, dayExp, dayRev, dayNet, pendingBefore, manual, total, bankName, bankNo, bankOwner, filename }) {
+  const DPR = 3;
+  const W = 900;
+  const FONT = "'Noto Sans Thai','Sarabun','Prompt',sans-serif";
+  const PAD = 0;
+  const TITLE_H = 52;
+  const COL_HEAD_H = 44;
+  const ROW_H = 46;
+  const TOTAL_ROW_H = 52;
+  const hasBankInfo = !!(bankName?.trim() || bankNo?.trim() || bankOwner?.trim());
+  const BANK_H = hasBankInfo ? 110 : 0;
+  const ROWS = 3; // ค่าสินค้า / ค่าใช้จ่าย / หัก
+  const H = TITLE_H + COL_HEAD_H + ROWS * ROW_H + TOTAL_ROW_H + BANK_H + 8;
+  const HALF = W / 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
+
+  const fmtN = (n) => {
+    if (typeof n !== "number") return String(n ?? "");
+    return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const drawText = (text, x, y, { size = 13, bold = false, color = "#1a2a4a", align = "left" } = {}) => {
+    ctx.fillStyle = color;
+    ctx.font = `${bold ? "bold " : ""}${size}px ${FONT}`;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.textAlign = "left";
+  };
+
+  // background
+  ctx.fillStyle = "#f0f4f8";
+  ctx.fillRect(0, 0, W, H);
+
+  // ===== Title =====
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(0, 0, W, TITLE_H);
+  drawText(`สรุปยอดใช้เงิน — ${creditDate}`, 20, TITLE_H / 2 + 6, { size: 17, bold: true, color: "#fff" });
+
+  // ===== Column headers =====
+  let y = TITLE_H;
+  // ซ้าย
+  ctx.fillStyle = "#6b1f1f";
+  ctx.fillRect(0, y, HALF, COL_HEAD_H);
+  drawText("ยอดใช้เงินต่อวัน / ยอดรับต่อวัน", 20, y + COL_HEAD_H / 2 + 6, { size: 13, bold: true, color: "#fff" });
+  // ขวา
+  ctx.fillStyle = "#1a3a5c";
+  ctx.fillRect(HALF, y, HALF, COL_HEAD_H);
+  drawText("ยอดใช้ที่ต้องเบิกคืน", HALF + 20, y + COL_HEAD_H / 2 + 6, { size: 13, bold: true, color: "#fff" });
+
+  // ===== Data rows =====
+  y += COL_HEAD_H;
+  const leftRows = [
+    { label: "ค่าสินค้า", value: dayCost },
+    { label: "ค่าใช้จ่าย", value: dayExp },
+    { label: "หัก รายได้จากสินค้า", value: dayRev > 0 ? `(${fmtN(dayRev)})` : "0.00" },
+  ];
+  const rightRows = [
+    { label: "ยอดใช้วันนี้", value: dayNet },
+    { label: "ยอดค้างเบิก", value: pendingBefore },
+    { label: "ยอดตกหล่น", value: manual, dim: true },
+  ];
+  const rowBgs = ["#E8EEF8", "#ffffff", "#E8EEF8"];
+
+  leftRows.forEach((r, i) => {
+    ctx.fillStyle = rowBgs[i];
+    ctx.fillRect(0, y + i * ROW_H, HALF, ROW_H);
+    drawText(r.label, 20, y + i * ROW_H + ROW_H / 2 + 5, { size: 13, color: "#374151" });
+    const val = typeof r.value === "string" ? r.value : fmtN(r.value);
+    drawText(val, HALF - 20, y + i * ROW_H + ROW_H / 2 + 5, { size: 14, bold: false, color: "#1E4D8C", align: "right" });
+  });
+  rightRows.forEach((r, i) => {
+    ctx.fillStyle = i === 0 ? "#ddeeff" : rowBgs[i];
+    ctx.fillRect(HALF, y + i * ROW_H, HALF, ROW_H);
+    drawText(r.label, HALF + 20, y + i * ROW_H + ROW_H / 2 + 5, { size: 13, color: "#374151" });
+    const val = r.dim ? fmtN(r.value) : fmtN(r.value);
+    const color = r.value < 0 ? "#c53030" : "#1E4D8C";
+    drawText(val, W - 20, y + i * ROW_H + ROW_H / 2 + 5, { size: 14, bold: i === 0, color, align: "right" });
+  });
+
+  // divider line between rows
+  for (let i = 0; i <= ROWS; i++) {
+    ctx.strokeStyle = "#dde3ec"; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(0, y + i * ROW_H); ctx.lineTo(W, y + i * ROW_H); ctx.stroke();
+  }
+  // center divider
+  ctx.strokeStyle = "#c0c8d8"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(HALF, TITLE_H); ctx.lineTo(HALF, y + ROWS * ROW_H + TOTAL_ROW_H); ctx.stroke();
+
+  y += ROWS * ROW_H;
+
+  // ===== Total rows =====
+  // ซ้าย total
+  ctx.fillStyle = "#e8d4d4";
+  ctx.fillRect(0, y, HALF, TOTAL_ROW_H);
+  drawText("รวมยอดใช้วันนี้", 20, y + TOTAL_ROW_H / 2 + 6, { size: 14, bold: true, color: "#4a1e1e" });
+  drawText(fmtN(dayNet), HALF - 20, y + TOTAL_ROW_H / 2 + 6, { size: 16, bold: true, color: "#4a1e1e", align: "right" });
+  // ขวา total
+  ctx.fillStyle = "#d0e4f7";
+  ctx.fillRect(HALF, y, HALF, TOTAL_ROW_H);
+  drawText("ยอดรวมที่ต้องเบิก", HALF + 20, y + TOTAL_ROW_H / 2 + 6, { size: 14, bold: true, color: "#1a3a5c" });
+  const totalColor = total < 0 ? "#c53030" : "#1a3a5c";
+  drawText(fmtN(total), W - 20, y + TOTAL_ROW_H / 2 + 6, { size: 16, bold: true, color: totalColor, align: "right" });
+
+  y += TOTAL_ROW_H;
+
+  // ===== Bank section =====
+  if (hasBankInfo) {
+    ctx.fillStyle = "#f9fafb";
+    ctx.fillRect(0, y, W, BANK_H);
+    ctx.strokeStyle = "#e5e7eb"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    drawText("โอนคืนวงเงินผ่าน", 20, y + 22, { size: 12, bold: true, color: "#374151" });
+    const bankLine = [bankName, bankNo, bankOwner].filter(Boolean).join("  |  ");
+    drawText(bankLine, 20, y + 46, { size: 13, color: "#185fa5" });
+    drawText(`ยอดโอนคืน: ฿${fmtN(total)}`, 20, y + 70, { size: 14, bold: true, color: "#1B3A6B" });
+  }
+
+  // watermark
+  ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.font = `10px ${FONT}`;
+  ctx.textAlign = "right";
+  ctx.fillText(new Date().toLocaleDateString("th-TH"), W - 12, H - 4);
+  ctx.textAlign = "left";
+
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      const file = new File([blob], filename || `สรุปยอดใช้เงิน_${creditDate}.png`, { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: `สรุปยอดใช้เงิน ${creditDate}` }); } catch {}
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = file.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        alert("💾 บันทึกรูปแล้ว!\nกรุณาเปิด LINE แล้วแนบรูปจากคลังรูปภาพได้เลยครับ");
+      }
+      resolve();
+    }, "image/png");
+  });
+}
+
+// ExportToolbar component — renders 3 export buttons for a section
+function ExportToolbar({ onPDF, onExcel, onImage, onLine, label = "" }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       {label && <span style={{ fontSize: 12, color: "#6b7280", marginRight: 4 }}>{label}</span>}
       <button
         onClick={onPDF}
         title="บันทึก PDF"
-        style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", fontSize: 12, color: "#1A6B35" }}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", fontSize: 12, color: "#1E4D8C" }}
       >
         <FileDown size={13} /> PDF
       </button>
       <button
         onClick={onExcel}
         title="บันทึก Excel"
-        style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", fontSize: 12, color: "#1A5C2A" }}
+        style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", fontSize: 12, color: "#1B3A6B" }}
       >
         <FileSpreadsheet size={13} /> Excel
       </button>
@@ -716,7 +896,7 @@ function ExportToolbar({ onPDF, onExcel, onImage, label = "", lineElementId = nu
       >
         <Image size={13} /> รูปภาพ
       </button>
-      {lineElementId && <LineShareButton elementId={lineElementId} title={lineTitle || label || "แชร์"} themeColor={lineThemeColor} />}
+      {onLine && <LineShareBtn onClick={onLine} style={{ padding: "5px 10px", fontSize: 12 }} />}
     </div>
   );
 }
@@ -737,77 +917,90 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const cost = Number(p.openingCost) || 0;
     if (qty > 0) {
       const openingDate = p.openingMonth ? `${p.openingMonth}-01` : "0000-01-01";
-      const lineTotal = Math.round(qty * cost * 100) / 100;
-      events.push({ type: "in", date: openingDate, ref: "ยอดยกมา", productId: p.id, qty, price: cost, lineTotal, isOpening: true });
+      events.push({ type: "in", date: openingDate, ref: "ยอดยกมา", productId: p.id, qty, price: cost, isOpening: true });
     }
   });
 
   purchases.forEach((po) => {
     if (po.status !== "อนุมัติแล้ว") return;
     po.items.forEach((it) => {
-      const qty = Number(it.net) || 0;
-      const price = Number(it.price) || 0;
-      const discountPct = Number(it.discountPct) || 0;
-      // ใช้สูตรเดียวกับ lineTotal ในใบรับ (Math.round 2 ทศนิยม)
-      const lineTotal = Math.round(qty * price * (1 - discountPct / 100) * 100) / 100;
-      events.push({ type: "in", date: po.date, ref: po.id, productId: it.productId, qty, price, lineTotal });
+      events.push({ type: "in", date: po.date, ref: po.id, productId: it.productId, qty: it.net, price: it.price });
     });
   });
-  // ข้อ 7: ตัดสต๊อกจากใบเบิกเท่านั้น — ใบขายไม่ตัดสต๊อกอีกต่อไป
+  // ข้อ 7: ตัดสต็อกจากใบเบิกเท่านั้น ใช้ it.value ที่บันทึกไว้เป็น costConsumed โดยตรง
   withdrawals.forEach((lot) => {
     (lot.items || []).forEach((it) => {
-      events.push({ type: "withdraw", date: lot.date, ref: lot.id, productId: it.sourceProductId, qty: it.qty });
+      const qty = Number(it.qty) || 0;
+      if (qty <= 0) return;
+      const costStored = Number(it.value) || 0; // มูลค่า FIFO ที่บันทึกตอนสร้างใบเบิก
+      events.push({ type: "withdraw", date: lot.date, ref: lot.id, productId: it.sourceProductId, qty, costStored });
     });
   });
-  // เรียงตามวันที่ ให้ in มาก่อน withdraw ในวันเดียวกัน
-  const typeOrder = { in: 0, withdraw: 1 };
+  // เรียงตามวันที่ แล้วให้ "withdraw" มาก่อน "in"/"out" ในวันเดียวกัน เพื่อให้ลำดับสอดคล้องกับการตัดสต๊อกทันที
+  const typeOrder = { in: 0, withdraw: 1, out: 2 };
   events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (typeOrder[a.type] ?? 1) - (typeOrder[b.type] ?? 1)));
 
   events.forEach((ev) => {
     if (!lots[ev.productId]) lots[ev.productId] = [];
     if (ev.type === "in") {
-      const totalCostOriginal = ev.lineTotal ?? (ev.qty * ev.price);
-      lots[ev.productId].push({ date: ev.date, ref: ev.ref, qtyRemaining: ev.qty, qtyOriginal: ev.qty, unitCost: ev.price, totalCostOriginal });
+      lots[ev.productId].push({ date: ev.date, ref: ev.ref, qtyRemaining: ev.qty, qtyOriginal: ev.qty, unitCost: ev.price });
       movements.push({ ...ev, balanceQty: null });
     } else {
       let remainingToConsume = ev.qty;
       let costConsumed = 0;
-      const queue = lots[ev.productId];
-      for (let i = 0; i < queue.length && remainingToConsume > 0; i++) {
-        const lot = queue[i];
-        if (lot.qtyRemaining <= 0) continue;
-        const take = Math.min(lot.qtyRemaining, remainingToConsume);
-        lot.qtyRemaining -= take;
-        costConsumed += take * lot.unitCost;
-        remainingToConsume -= take;
+
+      if (ev.costStored != null && ev.costStored > 0) {
+        // ใช้มูลค่าที่บันทึกไว้ตอนสร้างใบเบิก
+        costConsumed = ev.costStored;
+        // ตัด lots ตาม FIFO qty แต่ปรับ unitCost ให้ costConsumed รวมตรงกับ costStored
+        const queue = lots[ev.productId] || [];
+        const totalAvailCost = queue.reduce((s, l) => s + Math.max(0, l.qtyRemaining) * l.unitCost, 0);
+        let qtyLeft = ev.qty;
+        for (let i = 0; i < queue.length && qtyLeft > 0; i++) {
+          const lot = queue[i];
+          if (lot.qtyRemaining <= 0) continue;
+          const take = Math.min(lot.qtyRemaining, qtyLeft);
+          // ปรับ proportion ให้ costConsumed รวม = costStored
+          if (totalAvailCost > 0) {
+            const proportion = (take * lot.unitCost) / totalAvailCost;
+            // ไม่แก้ unitCost เพื่อรักษา avgCost ของ lot — แค่ตัด qty
+          }
+          lot.qtyRemaining -= take;
+          qtyLeft -= take;
+        }
+        // ปรับมูลค่า lots ที่เหลือให้ตรงกับ (totalAvailCost - ev.costStored)
+        const remainingCost = totalAvailCost - ev.costStored;
+        const remainingQty = (lots[ev.productId] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
+        if (remainingQty > 0 && remainingCost >= 0) {
+          const newAvgUnit = remainingCost / remainingQty;
+          // กระจาย remainingCost ไปยัง lots ที่เหลือตาม qty
+          (lots[ev.productId] || []).forEach(l => {
+            if (l.qtyRemaining > 0) l.unitCost = newAvgUnit;
+          });
+        }
+      } else {
+        // fallback: คำนวณ FIFO ปกติ
+        const queue = lots[ev.productId] || [];
+        for (let i = 0; i < queue.length && remainingToConsume > 0; i++) {
+          const lot = queue[i];
+          if (lot.qtyRemaining <= 0) continue;
+          const take = Math.min(lot.qtyRemaining, remainingToConsume);
+          lot.qtyRemaining -= take;
+          costConsumed += take * lot.unitCost;
+          remainingToConsume -= take;
+        }
       }
+
       const avgCostUsed = ev.qty > 0 ? costConsumed / ev.qty : 0;
       movements.push({ ...ev, costConsumed, avgCostUsed, shortfall: remainingToConsume });
     }
   });
 
   const summary = products.map((p) => {
-    const totalIn = (lots[p.id] || []).reduce((s, l) => s + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0);
-    const totalConsumed = movements
-      .filter((mv) => mv.productId === p.id && mv.type !== "in")
-      .reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
-    const totalCost = Math.max(0, totalIn - totalConsumed);
     const remaining = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
+    const totalCost = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining) * l.unitCost, 0);
     const avgCost = remaining > 0 ? totalCost / remaining : 0;
     return { productId: p.id, name: p.name, unit: p.unit, qty: remaining, totalCost, avgCost };
-  });
-
-  // รวม orphan lots (สินค้าที่ถูกลบแล้วแต่ยังมีใบรับอยู่) เข้าไปใน summary ด้วย
-  const productIdSet = new Set(products.map(p => p.id));
-  Object.entries(lots).forEach(([pid, ls]) => {
-    if (productIdSet.has(pid)) return; // มีในรายการสินค้าแล้ว ข้ามไป
-    const totalIn = ls.reduce((s, l) => s + (l.totalCostOriginal ?? l.qtyOriginal * l.unitCost), 0);
-    const totalConsumed = movements.filter(mv => mv.productId === pid && mv.type !== "in").reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
-    const totalCost = Math.max(0, totalIn - totalConsumed);
-    const remaining = ls.reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
-    if (totalCost > 0 || remaining > 0) {
-      summary.push({ productId: pid, name: `[ลบแล้ว] ${pid}`, unit: "", qty: remaining, totalCost, avgCost: remaining > 0 ? totalCost / remaining : 0 });
-    }
   });
 
   // Build per-product movement history with running balance
@@ -1091,7 +1284,7 @@ const inputStyle = {
 };
 
 const btnPrimary = {
-  background: "#1A5C2A", color: "#fff", border: "none", padding: "8px 16px",
+  background: "#1B3A6B", color: "#fff", border: "none", padding: "8px 16px",
   borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
 };
 const btnSecondary = {
@@ -1099,7 +1292,7 @@ const btnSecondary = {
   borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
 };
 const btnDanger = {
-  background: "#fff", color: "#2E7A42", border: "1px solid #C0E5CC", padding: "6px 10px",
+  background: "#fff", color: "#2456A4", border: "1px solid #C5D5F0", padding: "6px 10px",
   borderRadius: 8, fontSize: 13, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4,
 };
 const iconBtn = {
@@ -1107,8 +1300,8 @@ const iconBtn = {
   cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, color: "#374151",
 };
 const roundBtn = {
-  background: "#E8F5EC", border: "1.5px solid #2E8B45", padding: "9px 11px", borderRadius: 8,
-  cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#1A5C2A", lineHeight: 1, flexShrink: 0, minWidth: 38,
+  background: "#E8EEF8", border: "1.5px solid #2855A0", padding: "9px 11px", borderRadius: 8,
+  cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#1B3A6B", lineHeight: 1, flexShrink: 0, minWidth: 38,
 };
 
 const thStyle = { textAlign: "left", padding: "6px 12px", fontSize: 14, fontWeight: 600, color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" };
@@ -1477,8 +1670,8 @@ function Pagination({ page, totalPages, setPage, total, start, end }) {
               onClick={() => setPage(p)}
               style={{
                 width: 32, height: 32, borderRadius: 6, border: "1px solid",
-                borderColor: page === p ? "#2E8B45" : "#d1d5db",
-                background: page === p ? "#2E8B45" : "#fff",
+                borderColor: page === p ? "#2855A0" : "#d1d5db",
+                background: page === p ? "#2855A0" : "#fff",
                 color: page === p ? "#fff" : "#374151",
                 fontWeight: page === p ? 700 : 400,
                 cursor: "pointer", fontSize: 13,
@@ -1573,7 +1766,7 @@ function ImportProductsModal({ onClose, onImport, productCategories, unitOptions
       <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
         <strong>คอลัมน์ที่รองรับ:</strong> รหัส, ชื่อสินค้า, ประเภท, หน่วย, ยอดยกมา, ต้นทุน/หน่วย, เดือนยกมา, ราคาหน้าร้าน, ราคา VIP
       </div>
-      {error && <div style={{ background: "#E8F5EC", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2E7A42", marginBottom: 12 }}>{error}</div>}
+      {error && <div style={{ background: "#E8EEF8", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2456A4", marginBottom: 12 }}>{error}</div>}
       {preview && rows.length > 0 && (
         <>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>ตัวอย่างข้อมูลที่จะนำเข้า ({rows.length} รายการ)</div>
@@ -1687,7 +1880,7 @@ function ImportCustomersModal({ onClose, onImport }) {
       <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
         <strong>คอลัมน์ที่รองรับ:</strong> รหัส, ชื่อลูกค้า, เบอร์โทร, เลขบัตร/ผู้เสียภาษี, ที่อยู่, Line ID, Email
       </div>
-      {error && <div style={{ background: "#E8F5EC", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2E7A42", marginBottom: 12 }}>{error}</div>}
+      {error && <div style={{ background: "#E8EEF8", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2456A4", marginBottom: 12 }}>{error}</div>}
       {preview && rows.length > 0 && (
         <>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>ตัวอย่างข้อมูลที่จะนำเข้า ({rows.length} รายการ)</div>
@@ -1733,7 +1926,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [users, setUsers] = useState([
-    { id: "U001", username: "wpn", password: "0144", name: "ผู้ดูแลระบบ", role: "admin" },
+    { id: "U001", username: "Ttm", password: "8526", name: "ผู้ดูแลระบบ", role: "admin" },
   ]);
   const [currentUser, setCurrentUser] = useState(null);
   const [tab, setTab] = useState("dashboard");
@@ -1773,17 +1966,39 @@ export default function App() {
   const [sales, setSales] = useState(initialSales);
   const [storeBankAccounts, setStoreBankAccounts] = useState(initialStoreBankAccounts);
 
+  // payFlags และ transferDetails ต้องอยู่ระดับ App เพื่อไม่ให้ reset เมื่อสลับแท็บ
+  const [payFlags, setPayFlags] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("payFlags") || "{}"); } catch { return {}; }
+  });
+  const setFlag = (id, flag, val) => {
+    setPayFlags(prev => {
+      const next = { ...prev, [`${id}_${flag}`]: val };
+      try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const [transferDetails, setTransferDetails] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("transferDetails") || "{}"); } catch { return {}; }
+  });
+  const saveTransferDetail = (id, entries) => {
+    setTransferDetails(prev => {
+      const next = { ...prev, [id]: entries.filter(e => e.bankId || e.amount) };
+      try { localStorage.setItem("transferDetails", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
 
   // ตั้งค่ากิจการ (Company Settings) — ใช้ใน header ของใบรับ/ขายสินค้า
   // shopProfile — ชื่อ/โลโก้ใน sidebar (แยกจากข้อมูลบิล)
   const [shopProfile, setShopProfile] = useState({
-    name: "wpn@อุบล",
+    name: "Ttm@นครสวรรค์",
     nameEn: "ระบบซื้อขายของเก่ารีไซเคิล",
     logo: "",   // base64
   });
 
   const [companySettings, setCompanySettings] = useState({
-    name: "wpn@อุบล",
+    name: "Ttm@นครสวรรค์",
     nameEn: "",
     taxId: "",
     address: "",
@@ -1796,7 +2011,7 @@ export default function App() {
     salesTitle: "ใบกำกับภาษี / Invoice",
     expenseVoucherTitle: "ใบสำคัญจ่าย",
     expenseVoucherNote: "",
-    primaryColor: "#1A5C2A",
+    primaryColor: "#1B3A6B",
     accentColor: "#185fa5",
     footerNote: "",
     showQrCode: false,
@@ -1811,28 +2026,6 @@ export default function App() {
   const [prepayments, setPrepayments] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [bankTransfers, setBankTransfers] = useState([]);
-
-  // payFlags — เก็บที่ App level เพื่อ sync Supabase ผ่าน companySettings
-  const [payFlags, setPayFlagsApp] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("payFlags") || "{}"); } catch { return {}; }
-  });
-  const setPayFlags = (next) => {
-    setPayFlagsApp(next);
-    try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
-    setCompanySettings(prev => ({ ...prev, payFlags: next }));
-  };
-
-  // sync payFlags จาก companySettings เมื่อ realtime อัปเดตจากเครื่องอื่น
-  const lastPayFlagsRef = useRef(null);
-  useEffect(() => {
-    if (!companySettings?.payFlags) return;
-    const incoming = JSON.stringify(companySettings.payFlags);
-    if (incoming !== lastPayFlagsRef.current) {
-      lastPayFlagsRef.current = incoming;
-      setPayFlagsApp(companySettings.payFlags);
-      try { localStorage.setItem("payFlags", incoming); } catch {}
-    }
-  }, [companySettings?.payFlags]);
   const [expenses, setExpenses] = useState(initialExpenses);
   const [loans, setLoans] = useState(initialLoans);
   const [assets, setAssets] = useState(initialAssets);
@@ -1879,10 +2072,6 @@ export default function App() {
         if (data.storeBankAccounts) setStoreBankAccounts(dedup(data.storeBankAccounts))
         if (data.shopProfile)   setShopProfile(data.shopProfile)
         if (data.companySettings) setCompanySettings(data.companySettings)
-        if (data.companySettings?.payFlags) {
-          setPayFlagsApp(data.companySettings.payFlags);
-          try { localStorage.setItem("payFlags", JSON.stringify(data.companySettings.payFlags)); } catch {}
-        }
         if (data.users)         setUsers(data.users)
         if (data.unitOptions)   setUnitOptions(data.unitOptions)
         if (data.expenseCategories) setExpenseCategories(data.expenseCategories)
@@ -1915,13 +2104,7 @@ export default function App() {
       if (data.loans)           setLoans(dedup(data.loans))
       if (data.storeBankAccounts) setStoreBankAccounts(dedup(data.storeBankAccounts))
       if (data.shopProfile)     setShopProfile(data.shopProfile)
-      if (data.companySettings) {
-        setCompanySettings(data.companySettings)
-        if (data.companySettings.payFlags) {
-          setPayFlagsApp(data.companySettings.payFlags);
-          try { localStorage.setItem("payFlags", JSON.stringify(data.companySettings.payFlags)); } catch {}
-        }
-      }
+      if (data.companySettings) setCompanySettings(data.companySettings)
       if (data.users)           setUsers(data.users)
       if (data.unitOptions)     setUnitOptions(data.unitOptions)
       if (data.expenseCategories) setExpenseCategories(data.expenseCategories)
@@ -1955,8 +2138,9 @@ export default function App() {
   useSupabaseSync('dividendPayments',  dividendPayments,  setDividendPayments,  dbLoaded)
   useSupabaseSync('deliveries',        deliveries,        setDeliveries,        dbLoaded)
   useSupabaseSync('prepayments',       prepayments,       setPrepayments,       dbLoaded)
+  useSupabaseSync('payFlags',          payFlags,          setPayFlags,          dbLoaded)
 
-// products โหลดใน initial load แล้ว
+// loadProducts ถูกเรียกใน loadAllFromSupabase แล้ว ไม่ต้องเรียกซ้ำที่นี่
 
   const navItems = [
     { key: "dashboard",         label: "แดชบอร์ด",              icon: LayoutDashboard },
@@ -1984,7 +2168,7 @@ export default function App() {
 
   if (!isLoggedIn) {
     return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0D3D1A 0%, #2E8B45 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans Thai', 'Inter', system-ui, sans-serif" }}>
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0F2548 0%, #2855A0 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans Thai', 'Inter', system-ui, sans-serif" }}>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" />
         <div style={{ background: "#fff", borderRadius: 20, padding: "40px 36px", width: "100%", maxWidth: 400, boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
           {/* Logo / ชื่อแอพ */}
@@ -1993,11 +2177,11 @@ export default function App() {
               <img src={shopProfile.logo} alt="logo"
                 style={{ width: 72, height: 72, objectFit: "contain", borderRadius: 16, background: "#f3f4f6", padding: 8, margin: "0 auto 16px", display: "block" }} />
             ) : (
-              <div style={{ width: 64, height: 64, background: "linear-gradient(135deg, #0D3D1A, #2E8B45)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <div style={{ width: 64, height: 64, background: "linear-gradient(135deg, #0F2548, #2855A0)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                 <Boxes size={32} color="#fff" />
               </div>
             )}
-            <div style={{ fontWeight: 700, fontSize: 22, color: "#0D3D1A" }}>{shopProfile.name || "wpn@อุบล"}</div>
+            <div style={{ fontWeight: 700, fontSize: 22, color: "#0F2548" }}>{shopProfile.name || "Ttm@นครสวรรค์"}</div>
             <div style={{ fontSize: 13, color: "#9ca3af", marginTop: 4 }}>{shopProfile.nameEn || "ระบบซื้อขายของเก่ารีไซเคิล"}</div>
           </div>
 
@@ -2034,14 +2218,14 @@ export default function App() {
           </div>
 
           {loginError && (
-            <div style={{ background: "#E8F5EC", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2E7A42", marginBottom: 14, textAlign: "center" }}>
+            <div style={{ background: "#E8EEF8", border: "1px solid #f5c2c2", borderRadius: 8, padding: "8px 12px", fontSize: 13, color: "#2456A4", marginBottom: 14, textAlign: "center" }}>
               {loginError}
             </div>
           )}
 
           <button
             onClick={handleLogin}
-            style={{ width: "100%", padding: "12px", background: "linear-gradient(135deg, #0D3D1A, #2E8B45)", border: "none", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}
+            style={{ width: "100%", padding: "12px", background: "linear-gradient(135deg, #0F2548, #2855A0)", border: "none", borderRadius: 10, color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}
           >
             เข้าสู่ระบบ
           </button>
@@ -2062,7 +2246,7 @@ export default function App() {
       <ConfirmDialog pending={confirmDialog} onClose={() => setConfirmDialog(null)} />
 
       {/* Sidebar — fixed, independent scroll */}
-      <div style={{ width: sidebarOpen ? 220 : 64, background: "#0D3D1A", color: "#E8F5EC", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", height: "100vh", overflowY: "auto", overflowX: "auto", position: "fixed", top: 0, left: 0, zIndex: 10 }}>
+      <div style={{ width: sidebarOpen ? 220 : 64, background: "#0F2548", color: "#E8EEF8", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", height: "100vh", overflowY: "auto", overflowX: "auto", position: "fixed", top: 0, left: 0, zIndex: 10 }}>
         <div style={{ padding: sidebarOpen ? "16px 18px" : "16px 10px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           {sidebarOpen ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
@@ -2074,15 +2258,15 @@ export default function App() {
                   style={{ width: 38, height: 38, borderRadius: 8, objectFit: "contain", background: "#fff", padding: 3, flexShrink: 0 }}
                 />
               ) : (
-                <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2E8B45", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2855A0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <Boxes size={20} color="#4A0E0E" />
                 </div>
               )}
               <div style={{ minWidth: 0, overflow: "hidden" }}>
                 <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {shopProfile.name || "wpn@อุบล"}
+                  {shopProfile.name || "Ttm@นครสวรรค์"}
                 </div>
-                <div style={{ fontSize: 10, color: "#C0E5CC", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div style={{ fontSize: 10, color: "#C5D5F0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {shopProfile.nameEn || "ระบบซื้อขายของเก่ารีไซเคิล"}
                 </div>
               </div>
@@ -2096,7 +2280,7 @@ export default function App() {
                 style={{ width: 38, height: 38, borderRadius: 8, objectFit: "contain", background: "#fff", padding: 3, margin: "0 auto", display: "block" }}
               />
             ) : (
-              <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2E8B45", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+              <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2855A0", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
                 <Boxes size={20} color="#4A0E0E" />
               </div>
             )
@@ -2105,7 +2289,7 @@ export default function App() {
             <button
               onClick={() => setSidebarOpen(false)}
               title="ย่อเมนู"
-              style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: "#C0E5CC", cursor: "pointer", flexShrink: 0 }}
+              style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: "#C5D5F0", cursor: "pointer", flexShrink: 0 }}
             >
               <ChevronLeft size={16} />
             </button>
@@ -2116,7 +2300,7 @@ export default function App() {
             <button
               onClick={() => setSidebarOpen(true)}
               title="ขยายเมนู"
-              style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: "#C0E5CC", cursor: "pointer" }}
+              style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: "#C5D5F0", cursor: "pointer" }}
             >
               <Menu size={16} />
             </button>
@@ -2136,7 +2320,7 @@ export default function App() {
                   justifyContent: sidebarOpen ? "flex-start" : "center",
                   padding: sidebarOpen ? "10px 12px" : "10px 0", marginBottom: 4, borderRadius: 8, border: "none",
                   background: active ? "#C0392B" : "transparent",
-                  color: active ? "#fff" : "#C0E5CC",
+                  color: active ? "#fff" : "#C5D5F0",
                   fontWeight: active ? 600 : 500, fontSize: 14, cursor: "pointer", textAlign: "left",
                   transition: "background 0.15s", overflow: "hidden", whiteSpace: "nowrap",
                 }}
@@ -2167,14 +2351,14 @@ export default function App() {
                   width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
                   background: syncStatus === 'saving' ? "#fbbf24"
                     : syncStatus === 'error' ? "#ef4444"
-                    : "#2E8B45",
+                    : "#2855A0",
                   animation: syncStatus === 'saving' ? "pulse 1s ease-in-out infinite" : "none",
                 }} />
                 <span style={{
                   fontSize: 11, fontWeight: 600,
                   color: syncStatus === 'saving' ? "#fbbf24"
                     : syncStatus === 'error' ? "#fca5a5"
-                    : "#C0E5CC",
+                    : "#C5D5F0",
                 }}>
                   {syncStatus === 'saving' ? "กำลังบันทึก..." : syncStatus === 'error' ? "บันทึกไม่สำเร็จ!" : "บันทึกแล้ว ✓"}
                 </span>
@@ -2188,7 +2372,7 @@ export default function App() {
                 width: "100%", display: "flex", alignItems: "center", justifyContent: sidebarOpen ? "flex-start" : "center",
                 gap: 8, padding: sidebarOpen ? "8px 12px" : "8px 6px", borderRadius: 8,
                 background: isReloading ? "rgba(255,255,255,0.05)" : "rgba(165,40,40,0.2)",
-                border: "1px solid rgba(29,158,117,0.4)", color: "#C0E5CC", cursor: isReloading ? "not-allowed" : "pointer",
+                border: "1px solid rgba(29,158,117,0.4)", color: "#C5D5F0", cursor: isReloading ? "not-allowed" : "pointer",
                 fontSize: 12, fontWeight: 600, transition: "all 0.15s",
               }}
             >
@@ -2205,12 +2389,12 @@ export default function App() {
           {sidebarOpen ? (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#2E8B45", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#2855A0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <Users size={15} color="#4A0E0E" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#E8F5EC" }}>{currentUser?.name}</div>
-                  <div style={{ fontSize: 10, color: "#C0E5CC" }}>{currentUser?.role === "admin" ? "ผู้ดูแลระบบ" : "ผู้ใช้งาน"}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#E8EEF8" }}>{currentUser?.name}</div>
+                  <div style={{ fontSize: 10, color: "#C5D5F0" }}>{currentUser?.role === "admin" ? "ผู้ดูแลระบบ" : "ผู้ใช้งาน"}</div>
                 </div>
               </div>
               <button
@@ -2233,21 +2417,21 @@ export default function App() {
       </div>
 
       {/* Main content — independently scrollable */}
-      <div style={{ flex: 1, padding: "28px 32px", overflowY: "auto", overflowX: "auto", minHeight: "100vh", marginLeft: sidebarOpen ? 220 : 64, transition: "margin-left 0.2s ease", boxSizing: "border-box", width: sidebarOpen ? "calc(100vw - 220px)" : "calc(100vw - 64px)" }}>        {tab === "dashboard" && <Dashboard products={products} customers={customers} purchases={purchases} sales={sales} inventory={inventory} expenses={expenses} loans={loans} storeBankAccounts={storeBankAccounts} deposits={deposits} bankTransfers={bankTransfers} expenseCategories={expenseCategories} prepayments={prepayments} />}
+      <div style={{ flex: 1, padding: "28px 32px", overflowY: "auto", overflowX: "auto", minHeight: "100vh", marginLeft: sidebarOpen ? 220 : 64, transition: "margin-left 0.2s ease", boxSizing: "border-box", width: sidebarOpen ? "calc(100vw - 220px)" : "calc(100vw - 64px)" }}>        {tab === "dashboard" && <Dashboard products={products} customers={customers} purchases={purchases} sales={sales} inventory={inventory} expenses={expenses} loans={loans} storeBankAccounts={storeBankAccounts} deposits={deposits} bankTransfers={bankTransfers} expenseCategories={expenseCategories} prepayments={prepayments} assets={assets} />}
         {tab === "products" && <ProductsTab products={products} setProducts={setProducts} unitOptions={unitOptions} setUnitOptions={setUnitOptions} productCategories={productCategories} setProductCategories={setProductCategories} />}
         {tab === "customers" && <CustomersTab customers={customers} setCustomers={setCustomers} />}
         {tab === "purchases" && <PurchasesTab products={products} customers={customers} purchases={purchases} setPurchases={setPurchases} storeBankAccounts={storeBankAccounts} deposits={deposits} companySettings={companySettings} />}
         {tab === "withdrawals" && <WithdrawalsTab products={products} purchases={purchases} sales={sales} setSales={setSales} withdrawals={withdrawals} setWithdrawals={setWithdrawals} inventory={inventory} customers={customers} companySettings={companySettings} />}
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
-        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} setDeposits={setDeposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setPayFlags={setPayFlags} />}
+        {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setFlag={setFlag} transferDetails={transferDetails} saveTransferDetail={saveTransferDetail} />}
         {tab === "delivery" && <DeliveryTab deliveries={deliveries} setDeliveries={setDeliveries} products={products} customers={customers} sales={sales} companySettings={companySettings} />}
         {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} />}
         {tab === "deposits" && <DepositsTab customers={customers} setCustomers={setCustomers} deposits={deposits} setDeposits={setDeposits} purchases={purchases} storeBankAccounts={storeBankAccounts} />}
         {tab === "prepayments" && <PrepaymentsTab customers={customers} setCustomers={setCustomers} prepayments={prepayments} setPrepayments={setPrepayments} sales={sales} storeBankAccounts={storeBankAccounts} />}
         {tab === "expenses" && <ExpensesTab expenses={expenses} setExpenses={setExpenses} storeBankAccounts={storeBankAccounts} loans={loans} setLoans={setLoans} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} companySettings={companySettings} customers={customers} />}
         {tab === "expenseCategories" && <ExpenseCategoriesTab expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} expenses={expenses} setExpenses={setExpenses} />}
-        {tab === "loans" && <LoansTab loans={loans} setLoans={setLoans} expenses={expenses} customers={customers} storeBankAccounts={storeBankAccounts} />}
-        {tab === "bankaccounts" && <StoreBankAccountsTab accounts={storeBankAccounts} setAccounts={setStoreBankAccounts} purchases={purchases} sales={sales} expenses={expenses} deposits={deposits} bankTransfers={bankTransfers} customers={customers} loans={loans} />}
+        {tab === "loans" && <LoansTab loans={loans} setLoans={setLoans} expenses={expenses} customers={customers} />}
+        {tab === "bankaccounts" && <StoreBankAccountsTab accounts={storeBankAccounts} setAccounts={setStoreBankAccounts} purchases={purchases} sales={sales} expenses={expenses} deposits={deposits} bankTransfers={bankTransfers} customers={customers} />}
         {tab === "banktransfer" && <BankTransferTab storeBankAccounts={storeBankAccounts} bankTransfers={bankTransfers} setBankTransfers={setBankTransfers} />}
         {tab === "assets" && <AssetsTab assets={assets} setAssets={setAssets} />}
         {tab === "settings" && <CompanySettingsTab settings={companySettings} setSettings={setCompanySettings} shopProfile={shopProfile} setShopProfile={setShopProfile} />}
@@ -2262,24 +2446,10 @@ export default function App() {
 // ===================================================================
 // DASHBOARD
 // ===================================================================
-function Dashboard({ products, customers, purchases, sales, inventory, expenses, loans, storeBankAccounts, deposits, bankTransfers, expenseCategories, prepayments }) {
+function Dashboard({ products, customers, purchases, sales, inventory, expenses, loans, storeBankAccounts, deposits, bankTransfers, expenseCategories, prepayments, assets }) {
   // ---------- หมวดหมู่แดชบอร์ด ----------
-  const [dashSubTab, setDashSubTab] = useState("purchases");
-  const [landDebt, setLandDebtState] = useState(() => { try { return Number(localStorage.getItem("pnl_landDebt") || "0"); } catch { return 0; } });
-  const setLandDebt = (v) => { const n = Number(v) || 0; setLandDebtState(n); try { localStorage.setItem("pnl_landDebt", String(n)); } catch {} };
-  const [pnlOpenCost, setPnlOpenCostState] = useState(() => { try { return Number(localStorage.getItem("pnl_openCost") || "0"); } catch { return 0; } });
-  const setPnlOpenCost = (v) => { const n = Number(v) || 0; setPnlOpenCostState(n); try { localStorage.setItem("pnl_openCost", String(n)); } catch {} };
-  const [pnlOpenRevenue, setPnlOpenRevenueState] = useState(() => { try { return Number(localStorage.getItem("pnl_openRevenue") || "0"); } catch { return 0; } });
-  const setPnlOpenRevenue = (v) => { const n = Number(v) || 0; setPnlOpenRevenueState(n); try { localStorage.setItem("pnl_openRevenue", String(n)); } catch {} };
-  const [pnlOpenProfit, setPnlOpenProfitState] = useState(() => { try { return Number(localStorage.getItem("pnl_openProfit") || "0"); } catch { return 0; } });
-  const setPnlOpenProfit = (v) => { const n = Number(v) || 0; setPnlOpenProfitState(n); try { localStorage.setItem("pnl_openProfit", String(n)); } catch {} };
-  const [pnlDateFrom, setPnlDateFrom] = useState(() => { try { return localStorage.getItem("pnl_dateFrom") || new Date().getFullYear() + "-01-01"; } catch { return new Date().getFullYear() + "-01-01"; } });
-  const [pnlDateTo, setPnlDateTo] = useState(() => { try { return localStorage.getItem("pnl_dateTo") || new Date().toISOString().slice(0, 10); } catch { return new Date().toISOString().slice(0, 10); } });
-  const setPnlFrom = (v) => { setPnlDateFrom(v); try { localStorage.setItem("pnl_dateFrom", v); } catch {} };
-  const setPnlTo = (v) => { setPnlDateTo(v); try { localStorage.setItem("pnl_dateTo", v); } catch {} };
+  const [dashSubTab, setDashSubTab] = useState("purchases"); // "purchases" | "sales" | "expenses" | "stock" | "loans"
   const [expandedStockTypes, setExpandedStockTypes] = useState({}); // { [type]: bool } ติ๊กเลือกเพื่อดูรายการสินค้าในประเภทนั้น
-  const [selectedStockTypes, setSelectedStockTypes] = useState({}); // { [type]: bool } สำหรับ multi-select LINE share
-  const [sharingStockTypes, setSharingStockTypes] = useState(false);
 
   // ---------- ตัวเลือกช่วงเวลา: รายวัน / ช่วงวันที่ (เลือกเอง) / ทั้งหมด ----------
   const today = new Date().toISOString().slice(0, 10);
@@ -2306,7 +2476,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
   // ---------- กรองรายการซื้อ/ขายตามช่วงเวลา ----------
   const filteredPurchases = purchases.filter((po) => po.status === "อนุมัติแล้ว" && inRange(po.date));
-  const filteredSales = sales.filter((inv) => !inv.id.startsWith("OPENING-REC-") && !inv._isOpeningRec && inRange(inv.date));
+  const filteredSales = sales.filter((inv) => inRange(inv.date));
 
   // มูลค่าซื้อ ก่อน VAT (ต้นทุนสินค้าที่ใช้คำนวณสต๊อก/กำไร)
   const totalPurchaseValue = filteredPurchases.reduce((sum, po) => sum + po.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0), 0);
@@ -2393,7 +2563,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
   // ---------- สต๊อกคงเหลือ แบ่งตามประเภทสินค้า (สำหรับตัวกรองดรอปดาวน์) ----------
   const stockByType = useMemo(() => {
-    const STOCK_TYPE_ORDER_MEMO = ["ทองแดง","ทองเหลือง","แบต","สแตนเลส","อลูมิเนียม","ตะกั๋ว","กระดาษ","แก้ว","ลังเบียร์","พลาสติก","เหล็ก","สังกะสี","PVC"];
     const groups = {}; // type -> { type, qty, value, items: [...] }
     inventory.summary.forEach((s) => {
       const p = products.find((pr) => pr.id === s.productId);
@@ -2403,16 +2572,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
       groups[type].value += s.totalCost;
       groups[type].items.push(s);
     });
-    return Object.values(groups)
-      .map((g) => ({ ...g, avgCost: g.qty > 0 ? g.value / g.qty : 0 }))
-      .sort((a, b) => {
-        const ia = STOCK_TYPE_ORDER_MEMO.indexOf(a.type);
-        const ib = STOCK_TYPE_ORDER_MEMO.indexOf(b.type);
-        if (ia >= 0 && ib >= 0) return ia - ib;
-        if (ia >= 0) return -1;
-        if (ib >= 0) return 1;
-        return a.type.localeCompare(b.type, "th");
-      });
+    return sortStockGroups(
+      Object.values(groups).map((g) => ({ ...g, avgCost: g.qty > 0 ? g.value / g.qty : 0 }))
+    );
   }, [inventory.summary, products]);
 
   // ---------- คงเหลือสินเชื่อ/เงินกู้ — ยอดเงินต้นคงเหลือรวมทุกสัญญา ณ ปัจจุบัน ----------
@@ -2434,8 +2596,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     (deposits || []).forEach((d) => add(d.fromStoreBankId, Number(d.amount) || 0));
     (expenses || []).forEach((e) => (e.payments || []).forEach((p) => add(p.fromStoreBankId, Number(p.amount) || 0)));
     (bankTransfers || []).forEach((t) => add(t.fromBankId, Number(t.amount) || 0));
+    // จ่ายชำระเจ้าหนี้ยกมา → outflow
+    customers.forEach((c) => (c.openingPayments || []).forEach((p) => {
+      if (p.type === "payable") add(p.bankId, Number(p.amount) || 0);
+    }));
     return out;
-  }, [purchases, deposits, expenses, bankTransfers]);
+  }, [purchases, deposits, expenses, bankTransfers, customers]);
 
   // ---------- ยอดรับเข้าแบงค์ — เงินที่รับเข้าบัญชีร้านแต่ละบัญชีจากการขาย (สะสมทั้งหมด ไม่ขึ้นกับช่วงเวลา) ----------
   const bankInflows = useMemo(() => {
@@ -2447,12 +2613,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     sales.forEach((inv) => (inv.payments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
     (prepayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0));
     (bankTransfers || []).forEach((t) => add(t.toBankId, Number(t.amount) || 0));
-    // รับชำระลูกหนี้ยกมา
-    (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => add(p.toStoreBankId, Number(p.amount) || 0)));
-    // เงินกู้ยืม — นับยอดเงินต้นที่รับเข้าบัญชี
-    (loans || []).forEach((l) => { if (l.receivedBankId) add(l.receivedBankId, Number(l.principal) || 0); });
+    // รับชำระลูกหนี้ยกมา → inflow
+    customers.forEach((c) => (c.openingPayments || []).forEach((p) => {
+      if (p.type === "receivable") add(p.bankId, Number(p.amount) || 0);
+    }));
     return inn;
-  }, [sales, bankTransfers, prepayments, customers, loans]);
+  }, [sales, bankTransfers, prepayments, customers]);
 
 
   // ---------- ซื้อ/ขาย แบ่งตามประเภทสินค้า และแบ่งตามรายการสินค้า ----------
@@ -2521,27 +2687,14 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
-  const purchaseCard = { label: "มูลค่าซื้อ ก่อน VAT (อนุมัติแล้ว)", value: fmt(totalPurchaseValue), suffix: "บาท", icon: ArrowDownToLine, color: "#1e40af", bg: "#dbeafe" };
-  const salesCard = { label: "มูลค่าขายสะสม", value: fmt(totalSalesValue), suffix: "บาท", icon: ArrowUpFromLine, color: "#166534", bg: "#dcfce7" };
-  const expensesCard = { label: "ค่าใช้จ่ายรวม", value: fmt(totalExpenses), suffix: "บาท", icon: Receipt, color: "#92400e", bg: "#fef3c7" };
-  const stockCard = { label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)", value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#660000", bg: "#fdf0f0" };
-  const loanCard = { label: "คงเหลือสินเชื่อ/เงินกู้", value: fmt(totalLoanRemaining), suffix: "บาท", icon: CreditCard, color: "#0e7490", bg: "#cffafe" };
-
-  // theme color ต่อแท็บ
-  const DASH_THEME = {
-    purchases: { header: "#1e40af", headerText: "#fff", cardBg: "#eff6ff", border: "#bfdbfe" },
-    sales:     { header: "#166534", headerText: "#fff", cardBg: "#f0fdf4", border: "#bbf7d0" },
-    expenses:  { header: "#92400e", headerText: "#fff", cardBg: "#fffbeb", border: "#fde68a" },
-    stock:     { header: "#660000", headerText: "#fff", cardBg: "#fdf5f5", border: "#fddcdc" },
-    loans:     { header: "#0e7490", headerText: "#fff", cardBg: "#ecfeff", border: "#a5f3fc" },
-    cashflow:  { header: "#1e3a5f", headerText: "#fff", cardBg: "#f0f4ff", border: "#c7d7f5" },
-    pnl:       { header: "#065f46", headerText: "#fff", cardBg: "#f0fdf4", border: "#a7f3d0" },
+  const purchaseCard = { label: "มูลค่าซื้อ ก่อน VAT (อนุมัติแล้ว)", value: fmt(totalPurchaseValue), suffix: "บาท", icon: ArrowDownToLine, color: "#d85a30", bg: "#E8EEF8" };
+  const salesCard = { label: "มูลค่าขายสะสม", value: fmt(totalSalesValue), suffix: "บาท", icon: ArrowUpFromLine, color: "#185fa5", bg: "#e6f1fb" };
+  const expensesCard = { label: "ค่าใช้จ่ายรวม", value: fmt(totalExpenses), suffix: "บาท", icon: Receipt, color: "#1E4D8C", bg: "#E8EEF8" };
+  const stockCard = {
+    label: "ยอดคงเหลือสต็อก (ต้นทุนก่อน VAT)",
+    value: fmt(totalStockValue), suffix: "บาท", icon: Boxes, color: "#2855A0", bg: "#E8EEF8"
   };
-  const theme = DASH_THEME[dashSubTab] || DASH_THEME.cashflow;
-
-  // ลำดับประเภทสต็อกตามที่กำหนด
-  const STOCK_TYPE_ORDER = ["ทองแดง","ทองเหลือง","แบต","สแตนเลส","อลูมิเนียม","ตะกั๋ว","กระดาษ","แก้ว","ลังเบียร์","พลาสติก","เหล็ก","สังกะสี","PVC"];
-  const stockTypeOrder = (type) => { const i = STOCK_TYPE_ORDER.indexOf(type); return i >= 0 ? i : 999; };
+  const loanCard = { label: "คงเหลือสินเชื่อ/เงินกู้", value: fmt(totalLoanRemaining), suffix: "บาท", icon: CreditCard, color: "#1E4D8C", bg: "#E8EEF8" };
 
   const subTabs = [
     { key: "purchases", label: "ซื้อ", icon: ArrowDownToLine },
@@ -2555,24 +2708,15 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
   const renderCard = (c, snapshot) => {
     const Icon = c.icon;
     return (
-      <div key={c.label} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${theme.border}`, padding: "20px 22px" }}>
-        <div style={{ width: 42, height: 42, borderRadius: 10, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-          <Icon size={22} color={c.color} />
+      <div key={c.label} style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+          <Icon size={18} color={c.color} />
         </div>
-        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, lineHeight: 1.4 }}>{c.label} {snapshot && <span style={{ color: "#bcb6e0" }}>(ปัจจุบัน)</span>}</div>
-        <div style={{ fontSize: 36, fontWeight: 900, color: "#111827", lineHeight: 1, letterSpacing: "-0.5px" }}>{c.value}</div>
-        <div style={{ fontSize: 13, color: "#9ca3af", marginTop: 4 }}>{c.suffix}</div>
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label} {snapshot && <span style={{ color: "#bcb6e0" }}>(ปัจจุบัน)</span>}</div>
+        <div style={{ fontSize: 22, fontWeight: 700 }}>{c.value} <span style={{ fontSize: 13, fontWeight: 400, color: "#9ca3af" }}>{c.suffix}</span></div>
       </div>
     );
   };
-
-  // helper สร้าง header สีของกล่อง
-  const BoxHeader = ({ title, shareId, shareTitle }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.header, borderRadius: "10px 10px 0 0", padding: "10px 16px", marginBottom: 14 }}>
-      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: theme.headerText }}>{title}</h3>
-      {shareId && <LineShareButton elementId={shareId} title={shareTitle || title} small themeColor={theme.header} />}
-    </div>
-  );
 
   // ---------- Export handlers (per sub-tab) ----------
   const periodLabel = dateRange ? `${dateRange.start} ถึง ${dateRange.end}` : "ทั้งหมด";
@@ -2659,6 +2803,280 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
     },
   };
 
+  // ---------- LINE Share handlers (per sub-tab + per section) ----------
+  const lineShareHandlers = {
+    purchases: () => shareTableImage({
+      title: "ยอดซื้อรวม", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["ประเภทสินค้า", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: purchaseByType.map(g => [g.type, g.qty, g.avgCost, g.value]),
+      footerRow: ["รวมทั้งหมด", purchaseByType.reduce((s,g)=>s+g.qty,0), "", purchaseByType.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#0A1E3D", filename: `ยอดซื้อ_${periodLabel}.png`,
+    }),
+    sales: () => shareTableImage({
+      title: "ยอดขายรวม", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["ประเภทสินค้า", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: salesByType.map(g => [g.type, g.qty, g.avgCost, g.value]),
+      footerRow: ["รวมทั้งหมด", salesByType.reduce((s,g)=>s+g.qty,0), "", salesByType.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#185fa5", filename: `ยอดขาย_${periodLabel}.png`,
+    }),
+    expenses: () => shareTableImage({
+      title: "ค่าใช้จ่ายรวม", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["หมวดหมู่ย่อย", "รายการ", "ยอดรวม (฿)", "% ของทั้งหมด"],
+      rows: expensesBySubCategory.map(g => [g.subCategory, g.count, g.amount, totalExpenses > 0 ? `${((g.amount/totalExpenses)*100).toFixed(1)}%` : "-"]),
+      footerRow: ["รวม", expensesBySubCategory.reduce((s,g)=>s+g.count,0), totalExpenses, "100%"],
+      accentColor: "#1E4D8C", filename: `ค่าใช้จ่าย_${periodLabel}.png`,
+    }),
+    stock: () => shareStockCardImage({
+      groups: stockByType.filter(g => g.items.some(s => s.qty > 0)),
+      today,
+      filename: `สต็อก_${today}.png`,
+    }),
+    loans: () => shareTableImage({
+      title: "สินเชื่อ / เงินกู้คงเหลือ", subtitle: `ณ วันที่ ${today}`,
+      headers: ["ชื่อสัญญา", "ประเภท", "เงินต้น", "งวดคงเหลือ"],
+      rows: (loans||[]).map(l => { const paid=(l.paidInstallments||[]).length; return [l.name, l.type, l.principal, l.totalInstallments-paid]; }),
+      footerRow: null, accentColor: "#1E3A5F", filename: `สินเชื่อ_${today}.png`,
+    }),
+    cashflow: () => shareTableImage({
+      title: "สรุปเงินหมุนร้าน", subtitle: dateRange ? `ช่วง: ${periodLabel}` : `ทั้งหมด ณ วันที่ ${today}`,
+      headers: ["รายการ", "ยอด (฿)"],
+      rows: [
+        ["เงินในธนาคาร", null], ["ลูกหนี้ค้างรับ", null], ["เจ้าหนี้ค้างจ่าย", null],
+        ["เงินมัดจำคงเหลือ", null], ["มูลค่าสต็อก (ทุน)", null],
+      ].map((r,i) => {
+        const vals = [0, 0, 0, 0, inventory.summary.reduce((s,x)=>s+x.totalCost,0)];
+        return [r[0], vals[i]];
+      }),
+      footerRow: null, accentColor: "#0A1E3D", filename: `เงินหมุนร้าน_${today}.png`,
+    }),
+    // กล่องย่อย
+    purchaseByType: () => shareTableImage({
+      title: "ยอดซื้อ แบ่งตามประเภทสินค้า", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["ประเภท", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: purchaseByType.map(g => [g.type, g.qty, g.avgCost, g.value]),
+      footerRow: ["รวม", purchaseByType.reduce((s,g)=>s+g.qty,0), "", purchaseByType.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#0A1E3D", filename: `ยอดซื้อแยกประเภท_${periodLabel}.png`,
+    }),
+    purchaseByProduct: () => shareTableImage({
+      title: "ยอดซื้อ แบ่งตามรายการสินค้า", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["สินค้า", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: purchaseByProduct.map(g => [prodName(g.productId), g.qty, g.avgCost, g.value]),
+      footerRow: ["รวม", "", "", purchaseByProduct.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#0A1E3D", filename: `ยอดซื้อแยกสินค้า_${periodLabel}.png`,
+    }),
+    salesByType: () => shareTableImage({
+      title: "ยอดขาย แบ่งตามประเภทสินค้า", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["ประเภท", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: salesByType.map(g => [g.type, g.qty, g.avgCost, g.value]),
+      footerRow: ["รวม", salesByType.reduce((s,g)=>s+g.qty,0), "", salesByType.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#185fa5", filename: `ยอดขายแยกประเภท_${periodLabel}.png`,
+    }),
+    salesByProduct: () => shareTableImage({
+      title: "ยอดขาย แบ่งตามรายการสินค้า", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["สินค้า", "จำนวน", "ราคาเฉลี่ย", "มูลค่ารวม"],
+      rows: salesByProduct.map(g => [prodName(g.productId), g.qty, g.avgCost, g.value]),
+      footerRow: ["รวม", "", "", salesByProduct.reduce((s,g)=>s+g.value,0)],
+      accentColor: "#185fa5", filename: `ยอดขายแยกสินค้า_${periodLabel}.png`,
+    }),
+    expensesBySubCat: () => shareTableImage({
+      title: "ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย", subtitle: `ช่วงเวลา: ${periodLabel}`,
+      headers: ["หมวดหมู่ย่อย", "รายการ", "ยอดรวม (฿)", "%"],
+      rows: expensesBySubCategory.map(g => [g.subCategory, g.count, g.amount, totalExpenses>0 ? `${((g.amount/totalExpenses)*100).toFixed(1)}%` : "-"]),
+      footerRow: ["รวม", expensesBySubCategory.reduce((s,g)=>s+g.count,0), totalExpenses, "100%"],
+      accentColor: "#1E4D8C", filename: `ค่าใช้จ่ายแยกหมวด_${periodLabel}.png`,
+    }),
+  };
+
+  // state สำหรับ checkbox เลือกประเภทสต็อก (feature ข้อ 3)
+  const [selectedStockTypes, setSelectedStockTypes] = React.useState({});
+  const visibleStockGroups = stockByType.filter(g => g.items.some(s => s.qty > 0));
+  const allStockSelected = visibleStockGroups.length > 0 && visibleStockGroups.every(g => selectedStockTypes[g.type]);
+  const toggleAllStock = () => {
+    if (allStockSelected) setSelectedStockTypes({});
+    else { const next = {}; visibleStockGroups.forEach(g => { next[g.type] = true; }); setSelectedStockTypes(next); }
+  };
+// ===== แชร์สต็อกแบบ Card Style (ตัวอย่างที่ต้องการ) =====
+async function shareStockCardImage({ groups, today, filename = "สต็อก.png" }) {
+  const DPR = 3;
+  const W = 820;
+  const PAD = 24;
+  const FONT = "'Noto Sans Thai','Sarabun','Prompt',sans-serif";
+  const fmtN = (n) => typeof n === "number" ? n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : String(n ?? "");
+
+  // accent colors per index
+  const ACCENTS = ["#7b1f1f","#1a3a5c","#1a4a2a","#4a3a1a","#2a1a5c","#1a4a4a","#4a1a3a","#3a3a1a","#1a2a4a","#4a2a1a","#2a4a1a","#3a1a1a"];
+  const CARD_TITLE_H = 42;
+  const COL_HEAD_H = 36;
+  const ROW_H = 38;
+  const SUBTOTAL_H = 40;
+  const CARD_GAP = 16;
+  const HEADER_H = 72; // top title bar
+  const FOOTER_H = 52;
+
+  // คำนวณความสูงทั้งหมด
+  let totalH = HEADER_H + PAD;
+  groups.forEach(g => {
+    const visItems = g.items.filter(s => s.qty > 0);
+    totalH += CARD_TITLE_H + COL_HEAD_H + visItems.length * ROW_H + SUBTOTAL_H + CARD_GAP;
+  });
+  totalH += FOOTER_H + PAD;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = W * DPR;
+  canvas.height = totalH * DPR;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(DPR, DPR);
+
+  // background
+  ctx.fillStyle = "#f0f4f8";
+  ctx.fillRect(0, 0, W, totalH);
+
+  // ===== Top header =====
+  const hgrad = ctx.createLinearGradient(0, 0, W, HEADER_H);
+  hgrad.addColorStop(0, "#4a1e1e");
+  hgrad.addColorStop(1, "#2a0e0e");
+  ctx.fillStyle = hgrad;
+  ctx.fillRect(0, 0, W, HEADER_H);
+
+  // icon box
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  ctx.beginPath(); ctx.roundRect(PAD, 14, 44, 44, 8); ctx.fill();
+  ctx.font = `24px ${FONT}`; ctx.textAlign = "center";
+  ctx.fillText("📦", PAD + 22, 14 + 30);
+  ctx.textAlign = "left";
+
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold 20px ${FONT}`;
+  const typeNames = groups.map(g => g.type).join(", ");
+  const shortTitle = typeNames.length > 40 ? typeNames.slice(0, 38) + "…" : typeNames;
+  ctx.fillText(`สรุปสต็อก: ${shortTitle}`, PAD + 56, 36);
+  ctx.font = `13px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.fillText(`วันที่ ${today}`, PAD + 56, 58);
+
+  // ===== Cards =====
+  let y = HEADER_H + PAD;
+
+  groups.forEach((g, gi) => {
+    const visItems = g.items.filter(s => s.qty > 0);
+    const accent = ACCENTS[gi % ACCENTS.length];
+    const cardH = CARD_TITLE_H + COL_HEAD_H + visItems.length * ROW_H + SUBTOTAL_H;
+
+    // card background (rounded)
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.roundRect(0, y, W, cardH, 10); ctx.fill();
+
+    // left accent border
+    ctx.fillStyle = accent;
+    ctx.beginPath(); ctx.roundRect(0, y, 5, cardH, [10, 0, 0, 10]); ctx.fill();
+
+    // card title row
+    ctx.fillStyle = accent + "18"; // transparent tint
+    ctx.beginPath(); ctx.roundRect(5, y, W - 5, CARD_TITLE_H, [0, 10, 0, 0]); ctx.fill();
+
+    ctx.fillStyle = accent;
+    ctx.font = `bold 16px ${FONT}`;
+    ctx.fillText(`◆  ${g.type}`, PAD, y + CARD_TITLE_H / 2 + 6);
+
+    // column header row
+    const hy = y + CARD_TITLE_H;
+    ctx.fillStyle = "#1E3A5F";
+    ctx.fillRect(5, hy, W - 5, COL_HEAD_H);
+
+    const colHeaders = ["รายการสินค้า", "คงเหลือ", "มูลค่า", "ราคาเฉลี่ย"];
+    const colXs = [PAD, W * 0.52, W * 0.66, W * 0.82];
+    const colAligns = ["left", "right", "right", "right"];
+    colHeaders.forEach((h, ci) => {
+      ctx.fillStyle = "#c8d8f0";
+      ctx.font = `bold 12px ${FONT}`;
+      ctx.textAlign = colAligns[ci];
+      const tx = ci === 0 ? colXs[ci] : (ci === colHeaders.length - 1 ? W - PAD : colXs[ci] + (colXs[ci+1] - colXs[ci]) - 8);
+      ctx.fillText(h, tx, hy + COL_HEAD_H / 2 + 4);
+    });
+    ctx.textAlign = "left";
+
+    // data rows
+    let ry = hy + COL_HEAD_H;
+    visItems.forEach((s, ri) => {
+      ctx.fillStyle = ri % 2 === 0 ? "#ffffff" : "#f6f8fb";
+      ctx.fillRect(5, ry, W - 5, ROW_H);
+      ctx.strokeStyle = "#e8edf5"; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(PAD, ry + ROW_H); ctx.lineTo(W - PAD, ry + ROW_H); ctx.stroke();
+
+      const unit = s.unit || "กก.";
+      const rowData = [s.name, `${fmtN(s.qty)} ${unit}`, `฿${fmtN(s.totalCost)}`, fmtN(s.avgCost)];
+      rowData.forEach((val, ci) => {
+        const isNum = ci > 0;
+        ctx.fillStyle = ci === 0 ? "#1a2a4a" : ci === 2 ? "#9b1c1c" : "#374151";
+        ctx.font = ci === 0 ? `13px ${FONT}` : `13px ${FONT}`;
+        ctx.textAlign = colAligns[ci];
+        const tx = ci === 0 ? colXs[ci] : (ci === rowData.length - 1 ? W - PAD : colXs[ci] + (colXs[ci+1] - colXs[ci]) - 8);
+        ctx.fillText(val, tx, ry + ROW_H / 2 + 5);
+      });
+      ctx.textAlign = "left";
+      ry += ROW_H;
+    });
+
+    // subtotal row
+    const subY = ry;
+    ctx.fillStyle = "#1E3A5F";
+    ctx.fillRect(5, subY, W - 5, SUBTOTAL_H);
+    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    ctx.fillRect(5, subY, W - 5, 2);
+
+    ctx.fillStyle = "#fff"; ctx.font = `bold 14px ${FONT}`;
+    ctx.textAlign = "left"; ctx.fillText("รวม", PAD, subY + SUBTOTAL_H / 2 + 5);
+    ctx.textAlign = "right";
+    ctx.fillText(`${fmtN(g.qty)} กก.`, colXs[1] + (colXs[2] - colXs[1]) - 8, subY + SUBTOTAL_H / 2 + 5);
+    ctx.fillStyle = "#fca5a5"; ctx.font = `bold 15px ${FONT}`;
+    ctx.fillText(`฿${fmtN(g.value)}`, colXs[2] + (colXs[3] - colXs[2]) - 8, subY + SUBTOTAL_H / 2 + 5);
+    ctx.fillStyle = "#fff"; ctx.font = `bold 14px ${FONT}`;
+    ctx.fillText(fmtN(g.avgCost), W - PAD, subY + SUBTOTAL_H / 2 + 5);
+    ctx.textAlign = "left";
+
+    y += cardH + CARD_GAP;
+  });
+
+  // ===== Grand total footer =====
+  const totalQ = groups.reduce((s, g) => s + g.qty, 0);
+  const totalV = groups.reduce((s, g) => s + g.value, 0);
+  ctx.fillStyle = "#0A1E3D";
+  ctx.beginPath(); ctx.roundRect(0, y, W, FOOTER_H, 10); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = `bold 15px ${FONT}`;
+  ctx.textAlign = "left"; ctx.fillText("ผลรวมทั้งหมด", PAD, y + FOOTER_H / 2 + 5);
+  ctx.textAlign = "right";
+  ctx.fillText(`${fmtN(totalQ)} กก.`, colXs[1] + (colXs[2] - colXs[1]) - 8, y + FOOTER_H / 2 + 5);
+  ctx.fillStyle = "#fbbf24"; ctx.font = `bold 17px ${FONT}`;
+  ctx.fillText(`฿${fmtN(totalV)}`, colXs[2] + (colXs[3] - colXs[2]) - 8, y + FOOTER_H / 2 + 5);
+  ctx.textAlign = "left";
+
+  // watermark
+  ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = `11px ${FONT}`;
+  ctx.textAlign = "right";
+  ctx.fillText(new Date().toLocaleDateString("th-TH"), W - PAD, y + FOOTER_H - 8);
+  ctx.textAlign = "left";
+
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      const file = new File([blob], filename, { type: "image/png" });
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: "สรุปสต็อกสินค้า" }); } catch {}
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        alert("💾 บันทึกรูปแล้ว!\nกรุณาเปิด LINE แล้วแนบรูปจากคลังรูปภาพได้เลยครับ");
+      }
+      resolve();
+    }, "image/png");
+  });
+}
+
+  const shareSelectedStock = () => {
+    const chosen = visibleStockGroups.filter(g => selectedStockTypes[g.type]);
+    if (chosen.length === 0) { alert("กรุณาเลือกอย่างน้อย 1 ประเภทก่อนแชร์"); return; }
+    shareStockCardImage({ groups: chosen, today, filename: `สต็อกเลือก_${today}.png` });
+  };
+
   return (
     <div>
       <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 700 }}>แดชบอร์ดภาพรวม</h2>
@@ -2681,7 +3099,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               onClick={() => setPeriodMode(opt.key)}
               style={{
                 padding: "8px 16px", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600,
-                background: periodMode === opt.key ? "#2E8B45" : "#fff",
+                background: periodMode === opt.key ? "#2855A0" : "#fff",
                 color: periodMode === opt.key ? "#4A0E0E" : "#6b7280",
               }}
             >
@@ -2722,9 +3140,9 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               style={{
                 display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
                 padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600,
-                border: active ? "1px solid #2E8B45" : "1px solid #d1d5db",
-                background: active ? "#E8F5EC" : "#fff",
-                color: active ? "#1A5C2A" : "#6b7280",
+                border: active ? "1px solid #2855A0" : "1px solid #d1d5db",
+                background: active ? "#E8EEF8" : "#fff",
+                color: active ? "#1B3A6B" : "#6b7280",
               }}
             >
               <Icon size={15} />
@@ -2739,28 +3157,23 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} lineElementId="dash-export-purchases" lineTitle="ยอดซื้อ" lineThemeColor="#1e40af" />
+            <ExportToolbar onPDF={exportHandlers.purchases.pdf} onExcel={exportHandlers.purchases.excel} onImage={exportHandlers.purchases.image} onLine={lineShareHandlers.purchases} />
           </div>
           <div id="dash-export-purchases">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
             {renderCard(purchaseCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
-  <BoxHeader title="ยอดซื้อ แบ่งตามประเภทสินค้า" shareId="dash-box-purchase-by-type" shareTitle="ยอดซื้อแบ่งตามประเภทสินค้า" />
-  <div id="dash-box-purchase-by-type" style={{ padding: "0 16px 16px" }}>
-  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
-                <colgroup>
-                  <col style={{ width: "50%" }} />
-                  <col style={{ width: "20%" }} />
-                  <col style={{ width: "15%" }} />
-                  <col style={{ width: "15%" }} />
-                </colgroup>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px" }}>
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามประเภทสินค้า</h3>
+    <LineShareBtn onClick={lineShareHandlers.purchaseByType} />
+  </div>
+  <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>ประเภท</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>จำนวน</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ย/หน่วย</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
                   </tr>
                 </thead>
@@ -2769,36 +3182,29 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     <tr key={g.type}>
                       <td style={tdStyle}><Badge text={g.type} /></td>
                       <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.avgCost)}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(g.value)}</td>
                     </tr>
                   ))}
-                  {purchaseByType.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
+                  {purchaseByType.length === 0 && <tr><td colSpan={3} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
                 {purchaseByType.length > 0 && (
                   <tfoot>
                     <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(purchaseByType.reduce((s, g) => s + g.qty, 0))}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(purchaseByType.reduce((s, g) => s + g.value, 0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(purchaseByType.reduce((s, g) => s + g.value, 0))}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
-  </div>{/* end dash-box-purchase-by-type */}
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
-              <BoxHeader title="ยอดซื้อ แบ่งตามรายการสินค้า" shareId="dash-box-purchase-by-product" shareTitle="ยอดซื้อแบ่งตามรายการสินค้า" />
-              <div id="dash-box-purchase-by-product" style={{ padding: "0 16px 16px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
-                <colgroup>
-                  <col style={{ width: "50%" }} />
-                  <col style={{ width: "20%" }} />
-                  <col style={{ width: "15%" }} />
-                  <col style={{ width: "15%" }} />
-                </colgroup>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดซื้อ แบ่งตามรายการสินค้า</h3>
+                <LineShareBtn onClick={lineShareHandlers.purchaseByProduct} />
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>สินค้า</th>
@@ -2823,20 +3229,37 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(purchaseByProduct.reduce((s, g) => s + g.value, 0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>—</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(purchaseByProduct.reduce((s, g) => s + g.value, 0))}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
-              </div>{/* end dash-box-purchase-by-product */}
-            </div>{/* end by-product card */}
-          </div>{/* end flex-column gap-16 */}
+            </div>
+          </div>
 
           {/* สรุปบิลแยกตามช่องทางชำระ */}
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, marginTop: 16 }}>
-            <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-purchase-by-payment" shareTitle="สรุปบิลซื้อแยกตามช่องทางชำระ" />
-            <div id="dash-box-purchase-by-payment" style={{ padding: "0 16px 16px" }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+              <LineShareBtn onClick={() => {
+                const pos = filteredPurchases;
+                const grouped = {};
+                pos.forEach(po => {
+                  const custN = (customers.find(c=>c.id===po.customerId)?.name)||"-";
+                  const sub = (po.items||[]).reduce((s,it)=>{ const qty=Number(it.qty)||0; const net=it.deductPct!=null?qty-(qty*(Number(it.deductPct)||0)/100)-(Number(it.deductKg)||0):qty-(Number(it.deduct)||0); return s+net*(Number(it.price)||0); },0);
+                  const total = sub+sub*((Number(po.vatRate)||0)/100);
+                  (po.payments||[]).forEach(p => {
+                    const acc=storeBankAccounts.find(a=>a.id===p.fromStoreBankId);
+                    const grp=p.fromStoreBankId==="DEPOSIT"?"หักเงินมัดจำ":acc?`${acc.bankName} — ${acc.accountNo}`:(p.method||"เงินสด");
+                    if(!grouped[grp]) grouped[grp]={count:0,total:0};
+                    grouped[grp].count++; grouped[grp].total+=Number(p.amount)||0;
+                  });
+                  if(!(po.payments||[]).length){const grp="ยังไม่ชำระ";if(!grouped[grp])grouped[grp]={count:0,total:0};grouped[grp].count++;grouped[grp].total+=total;}
+                });
+                shareTableImage({ title:"สรุปบิลแยกช่องทางชำระ (ซื้อ)", subtitle:`ช่วงเวลา: ${periodLabel}`, headers:["ช่องทาง","จำนวนบิล","ยอดรวม (฿)"], rows:Object.entries(grouped).map(([g,v])=>[g,v.count,v.total]), footerRow:["รวม",Object.values(grouped).reduce((s,v)=>s+v.count,0),Object.values(grouped).reduce((s,v)=>s+v.total,0)], accentColor:"#0A1E3D", filename:`ช่องทางชำระซื้อ_${periodLabel}.png` });
+              }} />
+            </div>
             {(() => {
               // จัดกลุ่ม purchases ในช่วง
               const pos = filteredPurchases;
@@ -2884,23 +3307,22 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                         <tr key={i}>
                           <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: "#534ab7" }}>{r.id}</td>
                           <td style={tdStyle}>{r.cust}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>฿{fmt(r.amount)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>฿{fmt(r.amount)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
                       <tr style={{ background: "#f9fafb" }}>
                         <td colSpan={2} style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(rows.reduce((s,r)=>s+r.amount,0))}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(rows.reduce((s,r)=>s+r.amount,0))}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               ));
             })()}
-            </div>{/* end dash-box-purchase-by-payment */}
-          </div>{/* end by-payment card */}
-          </div>{/* end dash-export-purchases */}
+          </div>
+          </div>
         </>
       )}
 
@@ -2909,22 +3331,23 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} lineElementId="dash-export-sales" lineTitle="ยอดขาย" lineThemeColor="#166534" />
+            <ExportToolbar onPDF={exportHandlers.sales.pdf} onExcel={exportHandlers.sales.excel} onImage={exportHandlers.sales.image} onLine={lineShareHandlers.sales} />
           </div>
           <div id="dash-export-sales">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
             {renderCard(salesCard)}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
-              <BoxHeader title="ยอดขาย แบ่งตามประเภทสินค้า" shareId="dash-box-sale-by-type" shareTitle="ยอดขายแบ่งตามประเภทสินค้า" />
-              <div id="dash-box-sale-by-type" style={{ padding: "0 16px 16px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามประเภทสินค้า</h3>
+                <LineShareBtn onClick={lineShareHandlers.salesByType} />
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>ประเภท</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>จำนวน</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ย/หน่วย</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
                   </tr>
                 </thead>
@@ -2933,30 +3356,29 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     <tr key={g.type}>
                       <td style={tdStyle}><Badge text={g.type} /></td>
                       <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.avgCost)}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(g.value)}</td>
                     </tr>
                   ))}
-                  {salesByType.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
+                  {salesByType.length === 0 && <tr><td colSpan={3} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
                 {salesByType.length > 0 && (
                   <tfoot>
                     <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(salesByType.reduce((s, g) => s + g.qty, 0))}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByType.reduce((s, g) => s + g.value, 0))}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
-              </div>
             </div>
 
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
-              <BoxHeader title="ยอดขาย แบ่งตามรายการสินค้า" shareId="dash-box-sale-by-product" shareTitle="ยอดขายแบ่งตามรายการสินค้า" />
-              <div id="dash-box-sale-by-product" style={{ padding: "0 16px 16px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500  }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ยอดขาย แบ่งตามรายการสินค้า</h3>
+                <LineShareBtn onClick={lineShareHandlers.salesByProduct} />
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>สินค้า</th>
@@ -2981,13 +3403,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>—</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByProduct.reduce((s, g) => s + g.value, 0))}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
-              </div>
             </div>
           </div>
           </div>
@@ -2999,55 +3420,62 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ข้อมูลตามช่วงเวลา: {periodLabel}</span>
-            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} lineElementId="dash-export-expenses" lineTitle="ค่าใช้จ่าย" lineThemeColor="#92400e" />
+            <ExportToolbar onPDF={exportHandlers.expenses.pdf} onExcel={exportHandlers.expenses.excel} onImage={exportHandlers.expenses.image} onLine={lineShareHandlers.expenses} />
           </div>
           <div id="dash-export-expenses">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
               {renderCard(expensesCard)}
             </div>
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, overflowX: "auto" }}>
-              <BoxHeader title="ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย" shareId="dash-box-expense-by-subcat" shareTitle="ค่าใช้จ่ายแบ่งตามหมวดหมู่ย่อย" />
-              <div id="dash-box-expense-by-subcat" style={{ padding: "0 16px 16px" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>ค่าใช้จ่าย แบ่งตามหมวดหมู่ย่อย</h3>
+                <LineShareBtn onClick={lineShareHandlers.expensesBySubCat} />
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={thStyle}>หมวดหมู่ย่อย</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>จำนวนรายการ</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>รายการ</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>ยอดรวม (บาท)</th>
-                    <th style={{ ...thStyle, textAlign: "right" }}>% ของทั้งหมด</th>
                   </tr>
                 </thead>
                 <tbody>
                   {expensesBySubCategory.map((g) => (
                     <tr key={g.subCategory}>
                       <td style={tdStyle}>{g.subCategory}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{g.count} รายการ</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{g.count}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(g.amount)}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>
-                        {totalExpenses > 0 ? `${((g.amount / totalExpenses) * 100).toFixed(1)}%` : "-"}
-                      </td>
                     </tr>
                   ))}
-                  {expensesBySubCategory.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
+                  {expensesBySubCategory.length === 0 && <tr><td colSpan={3} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
                 {expensesBySubCategory.length > 0 && (
                   <tfoot>
                     <tr>
                       <td style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{expensesBySubCategory.reduce((s, g) => s + g.count, 0)} รายการ</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(totalExpenses)}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>100%</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{expensesBySubCategory.reduce((s, g) => s + g.count, 0)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(totalExpenses)}</td>
                     </tr>
                   </tfoot>
                 )}
               </table>
-              </div>{/* end dash-box-expense-by-subcat */}
             </div>
 
             {/* สรุปค่าใช้จ่ายแยกตามช่องทางชำระ */}
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, padding: 0, marginTop: 16 }}>
-              <BoxHeader title="สรุปบิลแยกตามช่องทางชำระ" shareId="dash-box-expense-by-payment" shareTitle="สรุปบิลค่าใช้จ่ายแยกตามช่องทางชำระ" />
-              <div id="dash-box-expense-by-payment" style={{ padding: "0 16px 16px" }}>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "18px 20px", marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>สรุปบิลแยกตามช่องทางชำระ</h3>
+                <LineShareBtn onClick={() => {
+                  const exps=(expenses||[]).filter(e=>inRange(e.billDate||e.date));
+                  const grouped={};
+                  exps.forEach(e=>{
+                    const total=(()=>{const items=e.items&&e.items.length>0?e.items:[{amount:e.amount,vatEnabled:e.vatEnabled,whtRate:e.whtRate}];return items.reduce((s,it)=>{const a=Number(it.amount)||0;return s+a+(it.vatEnabled?a*0.07:0)-a*((Number(it.whtRate)||0)/100);},0);})();
+                    (e.payments||[]).forEach(p=>{const acc=storeBankAccounts.find(a=>a.id===p.fromStoreBankId);const grp=p.fromStoreBankId==="DEPOSIT"?"หักเงินมัดจำ":acc?`${acc.bankName} — ${acc.accountNo}`:(p.method||"เงินสด");if(!grouped[grp])grouped[grp]={count:0,total:0};grouped[grp].count++;grouped[grp].total+=Number(p.amount)||0;});
+                    if(!(e.payments||[]).length){const grp="ยังไม่ชำระ";if(!grouped[grp])grouped[grp]={count:0,total:0};grouped[grp].count++;grouped[grp].total+=total;}
+                  });
+                  shareTableImage({title:"สรุปบิลแยกช่องทางชำระ (ค่าใช้จ่าย)",subtitle:`ช่วงเวลา: ${periodLabel}`,headers:["ช่องทาง","จำนวนบิล","ยอดรวม (฿)"],rows:Object.entries(grouped).map(([g,v])=>[g,v.count,v.total]),footerRow:["รวม",Object.values(grouped).reduce((s,v)=>s+v.count,0),Object.values(grouped).reduce((s,v)=>s+v.total,0)],accentColor:"#1E4D8C",filename:`ช่องทางชำระค่าใช้จ่าย_${periodLabel}.png`});
+                }} />
+              </div>
               {(() => {
                 const exps = (expenses || []).filter(e => inRange(e.billDate || e.date));
                 const entries = [];
@@ -3088,21 +3516,20 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                           <tr key={i}>
                             <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: "#534ab7" }}>{r.id}</td>
                             <td style={tdStyle}>{r.cust}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>฿{fmt(r.amount)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>฿{fmt(r.amount)}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr style={{ background: "#f9fafb" }}>
                           <td colSpan={2} style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(rows.reduce((s,r)=>s+r.amount,0))}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(rows.reduce((s,r)=>s+r.amount,0))}</td>
                         </tr>
                       </tfoot>
                     </table>
                   </div>
                 ));
               })()}
-              </div>{/* end dash-box-expense-by-payment */}
             </div>
           </div>
         </>
@@ -3113,190 +3540,38 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} lineElementId="dash-export-stock" lineTitle="สต๊อกคงเหลือ" lineThemeColor="#660000" />
+            <ExportToolbar onPDF={exportHandlers.stock.pdf} onExcel={exportHandlers.stock.excel} onImage={exportHandlers.stock.image} onLine={lineShareHandlers.stock} />
           </div>
           <div id="dash-export-stock">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
             {renderCard(stockCard, true)}
 
           </div>
-
-          {/* แถบ multi-select LINE share */}
-          {(() => {
-            const visibleTypes = stockByType.filter(g => g.items.some(s => s.qty > 0)).map(g => g.type);
-            const allSelected = visibleTypes.length > 0 && visibleTypes.every(t => selectedStockTypes[t]);
-            const anySelected = visibleTypes.some(t => selectedStockTypes[t]);
-            const selectedIds = visibleTypes.filter(t => selectedStockTypes[t]).map(t => `dash-stock-type-${t.replace(/\s/g, "-")}`);
-            return (
-              <div style={{ background: "#fdf5f5", border: `1px solid ${theme.border}`, borderRadius: 10, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#660000" }}>
-                  <input type="checkbox" checked={allSelected} onChange={e => {
-                    const next = {};
-                    visibleTypes.forEach(t => { next[t] = e.target.checked; });
-                    setSelectedStockTypes(next);
-                  }} style={{ width: 15, height: 15, accentColor: "#660000" }} />
-                  เลือกทั้งหมด
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
-                  {visibleTypes.map(t => (
-                    <label key={t} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#660000", background: selectedStockTypes[t] ? "#fddcdc" : "#fff", border: `1px solid ${selectedStockTypes[t] ? "#e08080" : "#fddcdc"}`, borderRadius: 6, padding: "3px 9px" }}>
-                      <input type="checkbox" checked={!!selectedStockTypes[t]} onChange={e => setSelectedStockTypes(prev => ({ ...prev, [t]: e.target.checked }))} style={{ width: 13, height: 13, accentColor: "#660000" }} />
-                      {t}
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto" }}>
+            <div style={{ background: "#0A1E3D", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>มูลค่าสต๊อกรวม</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 12, color: "#e7c9c9" }}>วันที่ {today}</span>
+                {/* Checkbox เลือกทั้งหมด + ปุ่มแชร์ที่เลือก */}
+                {visibleStockGroups.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 12, color: "#fff" }}>
+                      <input type="checkbox" checked={allStockSelected} onChange={toggleAllStock}
+                        style={{ width: 15, height: 15, cursor: "pointer", accentColor: LINE_GREEN }} />
+                      เลือกทั้งหมด
                     </label>
-                  ))}
-                </div>
-                {anySelected && (
-                  <button
-                    disabled={sharingStockTypes}
-                    onClick={async () => {
-                      setSharingStockTypes(true);
-                      try {
-                        const ok = await loadHtml2Canvas();
-                        if (!ok) { alert("ไม่สามารถโหลด html2canvas"); return; }
-
-                        const selectedNames = visibleTypes.filter(t => selectedStockTypes[t]);
-                        const selectedGroups = stockByType.filter(g => selectedStockTypes[g.type]);
-
-                        // สร้าง HTML card style ตามตัวอย่าง
-                        const container = document.createElement("div");
-                        container.style.cssText = "position:fixed;left:-99999px;top:0;width:700px;background:#f5f5f5;padding:0;font-family:'Noto Sans Thai',sans-serif;";
-
-                        // header รวม
-                        const header = document.createElement("div");
-                        header.style.cssText = "background:#5a1e1e;color:#fff;padding:16px 22px;display:flex;align-items:center;gap:10px;";
-                        header.innerHTML = `<span style="font-size:22px">📦</span><span style="font-size:16px;font-weight:700;">สรุปสต็อก: ${selectedNames.join(", ")}</span><span style="margin-left:auto;font-size:13px;color:rgba(255,255,255,0.7)">วันที่ ${today}</span>`;
-                        container.appendChild(header);
-
-                        const body = document.createElement("div");
-                        body.style.cssText = "padding:16px;display:flex;flex-direction:column;gap:16px;";
-
-                        selectedGroups.forEach(g => {
-                          const visItems = g.items.filter(s => s.qty > 0);
-                          if (visItems.length === 0) return;
-
-                          const card = document.createElement("div");
-                          card.style.cssText = "background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);";
-
-                          // card header
-                          const ch = document.createElement("div");
-                          ch.style.cssText = "background:#1a2744;color:#fff;padding:12px 18px;display:flex;align-items:center;gap:8px;";
-                          ch.innerHTML = `<span style="color:#5b9bd5;font-size:16px">◆</span><span style="font-size:18px;font-weight:700;">${g.type}</span>`;
-                          card.appendChild(ch);
-
-                          // table
-                          const tbl = document.createElement("table");
-                          tbl.style.cssText = "width:100%;border-collapse:collapse;";
-
-                          // thead
-                          const thead = document.createElement("thead");
-                          thead.innerHTML = `<tr style="background:#f0f0f0;">
-                            <th style="text-align:left;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">รายการสินค้า</th>
-                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">คงเหลือ</th>
-                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">มูลค่า</th>
-                            <th style="text-align:right;padding:10px 16px;font-size:14px;font-weight:700;color:#333;">ราคาเฉลี่ย</th>
-                          </tr>`;
-                          tbl.appendChild(thead);
-
-                          const tbody = document.createElement("tbody");
-                          visItems.forEach((s, idx) => {
-                            const p = products.find(pr => pr.id === s.productId);
-                            const unit = p?.unit || "";
-                            const bg = idx % 2 === 0 ? "#fff" : "#fafafa";
-                            const tr = document.createElement("tr");
-                            tr.style.cssText = `background:${bg};border-bottom:1px solid #f0f0f0;`;
-                            tr.innerHTML = `
-                              <td style="padding:9px 16px;font-size:15px;color:#222;">${s.name}</td>
-                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#444;">${fmtInt(s.qty)} ${unit}</td>
-                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#c0392b;font-weight:600;">฿${fmt(s.totalCost)}</td>
-                              <td style="padding:9px 16px;font-size:15px;text-align:right;color:#333;">${fmt(s.avgCost)}</td>`;
-                            tbody.appendChild(tr);
-                          });
-                          tbl.appendChild(tbody);
-
-                          // tfoot
-                          const tfoot = document.createElement("tfoot");
-                          tfoot.innerHTML = `<tr style="background:#1a2744;">
-                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;">รวม</td>
-                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;text-align:right;">${fmtInt(g.qty)}</td>
-                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#f4a261;text-align:right;">฿${fmt(g.value)}</td>
-                            <td style="padding:10px 16px;font-size:15px;font-weight:700;color:#fff;text-align:right;">${fmt(g.avgCost)}</td>
-                          </tr>`;
-                          tbl.appendChild(tfoot);
-                          card.appendChild(tbl);
-                          body.appendChild(card);
-                        });
-
-                        container.appendChild(body);
-                        document.body.appendChild(container);
-                        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-                        let canvas;
-                        try {
-                          canvas = await window.html2canvas(container, {
-                            scale: 2, useCORS: true, backgroundColor: "#f5f5f5",
-                            width: 700, height: container.scrollHeight,
-                            windowWidth: 700,
-                          });
-                        } finally {
-                          document.body.removeChild(container);
-                        }
-                        if (canvas) await shareCanvas(canvas, `สต๊อก — ${selectedNames.join(", ")} — ${today}`);
-                      } finally {
-                        setSharingStockTypes(false);
-                      }
-                    }}
-                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", borderRadius: 7, border: "none", background: sharingStockTypes ? "#9ca3af" : "#06C755", color: "#fff", cursor: sharingStockTypes ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M19.365 9.863c.349 0 .63.285.63.631 0 .345-.281.63-.63.63H17.61v1.125h1.755c.349 0 .63.283.63.63 0 .344-.281.629-.63.629h-2.386c-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63h2.386c.349 0 .63.285.63.63 0 .349-.281.63-.63.63H17.61v1.125h1.755zm-3.855 3.016c0 .27-.174.51-.432.596-.064.021-.133.031-.199.031-.211 0-.391-.09-.51-.25l-2.443-3.317v2.94c0 .344-.279.629-.631.629-.346 0-.626-.285-.626-.629V8.108c0-.27.173-.51.43-.595.06-.023.136-.033.194-.033.195 0 .375.104.495.254l2.462 3.33V8.108c0-.345.282-.63.63-.63.345 0 .63.285.63.63v4.771zm-5.741 0c0 .344-.282.629-.631.629-.345 0-.627-.285-.627-.629V8.108c0-.345.282-.63.627-.63.349 0 .631.285.631.63v4.771zm-2.466.629H4.917c-.345 0-.63-.285-.63-.629V8.108c0-.345.285-.63.63-.63.348 0 .63.285.63.63v4.141h1.756c.348 0 .629.283.629.63 0 .344-.281.629-.629.629M24 10.314C24 4.943 18.615.572 12 .572S0 4.943 0 10.314c0 4.811 4.27 8.842 10.035 9.608.391.082.923.258 1.058.59.12.301.079.766.038 1.08l-.164 1.02c-.045.301-.24 1.186 1.049.645 1.291-.539 6.916-4.078 9.436-6.975C23.176 14.393 24 12.458 24 10.314"/>
-                    </svg>
-                    {sharingStockTypes ? "กำลังสร้างรูป..." : `แชร์ที่เลือก (${visibleTypes.filter(t => selectedStockTypes[t]).length})`}
-                  </button>
+                    {Object.values(selectedStockTypes).some(Boolean) && (
+                      <button onClick={shareSelectedStock}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: "none", background: LINE_GREEN, cursor: "pointer", fontSize: 11, color: "#fff", fontWeight: 600 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d={LINE_SVG_PATH} /></svg>
+                        แชร์ที่เลือก ({Object.values(selectedStockTypes).filter(Boolean).length})
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            );
-          })()}
-
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflowX: "auto" }}>
-            {/* hidden divs สำหรับ capture รูปแชร์ LINE — วางนอก table เพื่อไม่ถูกตัดความกว้าง */}
-            <div data-share-skip="true" style={{ position: "absolute", left: -9999, top: 0, width: 480 }}>
-              {stockByType.map((g) => {
-                const visibleItems = g.items.filter((s) => s.qty > 0);
-                if (visibleItems.length === 0) return null;
-                const typeId = `dash-stock-type-${g.type.replace(/\s/g, "-")}`;
-                return (
-                  <div key={g.type} id={typeId} style={{ background: "#fff", padding: 16, width: 480, fontFamily: "inherit" }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#660000", background: "#fdf5f5", padding: "6px 12px", borderRadius: 6, marginBottom: 8 }}>{g.type} — สต๊อกคงเหลือ วันที่ {today}</div>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr>
-                        <th style={{ ...thStyle, fontSize: 12 }}>สินค้า</th>
-                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>คงเหลือ</th>
-                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>มูลค่า</th>
-                        <th style={{ ...thStyle, textAlign: "right", fontSize: 12 }}>ราคาเฉลี่ย</th>
-                      </tr></thead>
-                      <tbody>{visibleItems.map(s => (
-                        <tr key={s.productId}>
-                          <td style={{ ...tdStyle, fontSize: 12 }}>{s.name}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12, color: "#660000" }}>{fmt(s.totalCost)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontSize: 12 }}>{fmt(s.avgCost)}</td>
-                        </tr>
-                      ))}</tbody>
-                      <tfoot><tr style={{ background: "#660000" }}>
-                        <td style={{ ...tdStyle, fontWeight: 700, color: "#fff", fontSize: 12 }}>รวม {g.type}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.qty)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc", fontSize: 12 }}>{fmt(g.value)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff", fontSize: 12 }}>{fmt(g.avgCost)}</td>
-                      </tr></tfoot>
-                    </table>
-                  </div>
-                );
-              })}
             </div>
-            <div style={{ background: theme.header, color: theme.headerText, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>มูลค่าสต๊อกรวม</h3>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.75)" }}>วันที่ {today}</span>
-            </div>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 480 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 300 }}>
               <thead>
                 <tr>
                   <th style={thStyle}>ประเภทสินค้า / รายการสินค้า</th>
@@ -3310,6 +3585,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   const visibleItems = g.items.filter((s) => s.qty > 0);
                   if (visibleItems.length === 0) return null;
                   const isExpanded = !!expandedStockTypes[g.type];
+                  const isChecked = !!selectedStockTypes[g.type];
+                  const toggleCheck = (e) => { e.stopPropagation(); setSelectedStockTypes(prev => ({ ...prev, [g.type]: !prev[g.type] })); };
                   return (
                     <React.Fragment key={g.type}>
                       {isExpanded && (
@@ -3317,26 +3594,31 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                           <tr
                             onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
                             style={{ cursor: "pointer" }}
-                            onMouseEnter={(e) => { e.currentTarget.style.background = "#fdf5f5"; }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = "#f3f4f6"; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
                           >
-                            <td style={{ ...tdStyle, fontWeight: 700, color: "#660000" }}>{g.type}</td>
+                            <td style={{ ...tdStyle, fontWeight: 700, color: "#1E4D8C" }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={isChecked} onChange={toggleCheck} onClick={e=>e.stopPropagation()} style={{ width:15,height:15,cursor:"pointer",accentColor:LINE_GREEN,flexShrink:0 }} />
+                                {g.type}
+                              </span>
+                            </td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
                             <td style={tdStyle}></td>
                           </tr>
                           {visibleItems.map((s) => (
                             <tr key={s.productId}>
-                              <td style={{ ...tdStyle, color: "#111827", paddingLeft: 24 }}>- {s.name}</td>
+                              <td style={{ ...tdStyle, color: "#111827", paddingLeft: 32 }}>- {s.name}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.qty)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: "#660000" }}>{fmt(s.totalCost)}</td>
+                              <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C" }}>{fmt(s.totalCost)}</td>
                               <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(s.avgCost)}</td>
                             </tr>
                           ))}
-                          <tr style={{ background: "#660000" }}>
+                          <tr style={{ background: "#1f2937" }}>
                             <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc" }}>{fmt(g.value)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5" }}>{fmt(g.value)}</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                           </tr>
                         </>
@@ -3344,13 +3626,18 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                       {!isExpanded && (
                         <tr
                           onClick={() => setExpandedStockTypes((prev) => ({ ...prev, [g.type]: !prev[g.type] }))}
-                          style={{ cursor: "pointer", background: "#660000" }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = "#660000"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = "#660000"; }}
+                          style={{ cursor: "pointer", background: isChecked ? "#064e3b" : "#1f2937" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = "#374151"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = isChecked ? "#064e3b" : "#1f2937"; }}
                         >
-                          <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>{g.type} (ยอดรวม)</td>
+                          <td style={{ ...tdStyle, fontWeight: 700, color: "#fff" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                              <input type="checkbox" checked={isChecked} onChange={toggleCheck} onClick={e=>e.stopPropagation()} style={{ width:15,height:15,cursor:"pointer",accentColor:LINE_GREEN,flexShrink:0 }} />
+                              {g.type} (ยอดรวม)
+                            </span>
+                          </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.qty)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fddcdc" }}>{fmt(g.value)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fca5a5" }}>{fmt(g.value)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#fff" }}>{fmt(g.avgCost)}</td>
                         </tr>
                       )}
@@ -3363,11 +3650,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </tbody>
               {stockByType.length > 0 && (
                 <tfoot>
-                  <tr style={{ borderTop: `3px solid ${theme.header}` }}>
-                    <td style={{ ...tdStyle, fontWeight: 700, color: "#660000", fontSize: 14 }}>ผลรวม</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#660000", fontSize: 14 }}>
+                  <tr style={{ borderTop: "3px solid #1B3A6B" }}>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: "#1B3A6B", fontSize: 14 }}>ผลรวม</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.qty, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B", fontSize: 14 }}>{fmt(stockByType.reduce((s, g) => s + g.value, 0))}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B", fontSize: 14 }}>
                       {(() => {
                         const totalQty = stockByType.reduce((s, g) => s + g.qty, 0);
                         const totalVal = stockByType.reduce((s, g) => s + g.value, 0);
@@ -3388,22 +3675,111 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 13, color: "#6b7280" }}>ยอดคงเหลือ ณ วันที่ {today}</span>
-            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} lineElementId="dash-export-loans" lineTitle="สินเชื่อ/เงินกู้" lineThemeColor="#0e7490" />
+            <ExportToolbar onPDF={exportHandlers.loans.pdf} onExcel={exportHandlers.loans.excel} onImage={exportHandlers.loans.image} onLine={lineShareHandlers.loans} />
           </div>
-          <div id="dash-export-loans" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
-            {renderCard(loanCard, true)}
-            {totalOpeningBankBalance > 0 && (
-              <div style={{ background: "#e6f1fb", borderRadius: 12, border: "1px solid #b3d0f0", padding: "14px 18px" }}>
-                <div style={{ fontSize: 12, color: "#0c447c", marginBottom: 4, fontWeight: 600 }}>ยอดธนาคารยกมา</div>
-                <div style={{ fontWeight: 700, fontSize: 18, color: "#185fa5" }}>฿{fmt(totalOpeningBankBalance)}</div>
-                <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>
-                  {storeBankAccounts.filter(a => Number(a.openingBalance) > 0).map(a => (
-                    <div key={a.id}>{a.bankName}: ฿{fmt(a.openingBalance)}</div>
-                  ))}
+          <div id="dash-export-loans">
+            {/* Summary card */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 }}>
+              {renderCard(loanCard, true)}
+              {(assets||[]).length > 0 && (
+                <div style={{ background: "#f0fdf4", borderRadius: 12, border: "1px solid #bbf7d0", padding: "14px 18px" }}>
+                  <div style={{ fontSize: 12, color: "#166534", marginBottom: 4, fontWeight: 600 }}>มูลค่าทรัพย์สินรวม</div>
+                  <div style={{ fontWeight: 700, fontSize: 18, color: "#15803d" }}>฿{fmt((assets||[]).reduce((s,a)=>s+Number(a.cost),0))}</div>
+                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>{(assets||[]).length} รายการ</div>
                 </div>
+              )}
+            </div>
+
+            {/* ตารางรายการเงินกู้ */}
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", marginBottom: 16 }}>
+              <div style={{ background: "#1E3A5F", color: "#fff", padding: "12px 16px", borderRadius: "12px 12px 0 0", fontWeight: 700, fontSize: 14 }}>
+                รายการสินเชื่อ / เงินกู้
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thStyle}>ชื่อสัญญา</th>
+                    <th style={thStyle}>ประเภท</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>เงินต้น</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>ผ่อนแล้ว</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>คงเหลือ</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>งวดที่เหลือ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(loans||[]).length === 0 && (
+                    <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีรายการสินเชื่อ</td></tr>
+                  )}
+                  {(loans||[]).map((l) => {
+                    const principal = Number(l.principal) || 0;
+                    const paidCount = (l.paidInstallments||[]).length;
+                    const totalInst = Number(l.totalInstallments) || 0;
+                    const paidAmt = (l.paidInstallments||[]).reduce((s,p)=>s+(Number(p.principalPortion)||0),0);
+                    const remaining = Math.max(0, principal - paidAmt);
+                    return (
+                      <tr key={l.id}>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>{l.name}</td>
+                        <td style={tdStyle}><Badge text={l.type || "—"} /></td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(principal)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#15803d" }}>฿{fmt(paidAmt)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(remaining)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>{totalInst - paidCount} / {totalInst} งวด</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {(loans||[]).length > 0 && (
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #e5e7eb", background: "#f9fafb" }}>
+                      <td colSpan={2} style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt((loans||[]).reduce((s,l)=>s+Number(l.principal||0),0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#15803d" }}>฿{fmt((loans||[]).reduce((s,l)=>s+(l.paidInstallments||[]).reduce((s2,p)=>s2+(Number(p.principalPortion)||0),0),0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(totalLoanRemaining)}</td>
+                      <td style={tdStyle}></td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            {/* ตารางทรัพย์สิน */}
+            {(assets||[]).length > 0 && (
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb" }}>
+                <div style={{ background: "#166534", color: "#fff", padding: "12px 16px", borderRadius: "12px 12px 0 0", fontWeight: 700, fontSize: 14 }}>
+                  ทะเบียนทรัพย์สิน
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>ชื่อทรัพย์สิน</th>
+                      <th style={thStyle}>หมวดหมู่</th>
+                      <th style={thStyle}>วันที่ซื้อ</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>ราคาทุน</th>
+                      <th style={thStyle}>หมายเหตุ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(assets||[]).map((a) => (
+                      <tr key={a.id}>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>{a.name}</td>
+                        <td style={tdStyle}><Badge text={a.category} /></td>
+                        <td style={tdStyle}>{a.purchaseDate}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#15803d" }}>฿{fmt(a.cost)}</td>
+                        <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>{a.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #e5e7eb", background: "#f9fafb" }}>
+                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700 }}>รวม {(assets||[]).length} รายการ</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#15803d" }}>฿{fmt((assets||[]).reduce((s,a)=>s+Number(a.cost),0))}</td>
+                      <td style={tdStyle}></td>
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
-        </div>{/* end dash-export-loans */}
+          </div>{/* end dash-export-loans */}
         </>
       )}
 
@@ -3411,7 +3787,8 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         // ===== ตัวกรองช่วงเวลาเฉพาะของ "เงินหมุนร้าน" =====
         const bankInflowsRange = {};
         sales.forEach((inv) => (inv.payments || []).forEach((p) => {
-          if (p.toStoreBankId && p.toStoreBankId !== "CASH" && p.toStoreBankId !== "PREPAYMENT" && inRange(p.date)) {
+          const pDate = p.date || inv.date;
+          if (p.toStoreBankId && p.toStoreBankId !== "CASH" && p.toStoreBankId !== "PREPAYMENT" && inRange(pDate)) {
             bankInflowsRange[p.toStoreBankId] = (bankInflowsRange[p.toStoreBankId] || 0) + (Number(p.amount) || 0);
           }
         }));
@@ -3425,18 +3802,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
             bankInflowsRange[t.toBankId] = (bankInflowsRange[t.toBankId] || 0) + (Number(t.amount) || 0);
           }
         });
-        // รับชำระลูกหนี้ยกมา — นับเข้า bankInflowsRange ด้วย
-        (customers || []).forEach((c) => (c.receivableOpeningPayments || []).forEach((p) => {
-          if (p.toStoreBankId && p.toStoreBankId !== "CASH" && p.toStoreBankId !== "PREPAYMENT" && inRange(p.date)) {
-            bankInflowsRange[p.toStoreBankId] = (bankInflowsRange[p.toStoreBankId] || 0) + (Number(p.amount) || 0);
-          }
-        }));
-        // เงินกู้ยืม — นับยอดเงินต้นที่รับเข้าบัญชีตามวันที่เริ่มสัญญา
-        (loans || []).forEach((l) => {
-          if (l.receivedBankId && l.startDate && inRange(l.startDate)) {
-            bankInflowsRange[l.receivedBankId] = (bankInflowsRange[l.receivedBankId] || 0) + (Number(l.principal) || 0);
-          }
-        });
 
         const bankOutflowsRange = {};
         const addOutflowRange = (bankId, amount, date) => {
@@ -3444,10 +3809,22 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           if (!inRange(date)) return;
           bankOutflowsRange[bankId] = (bankOutflowsRange[bankId] || 0) + amount;
         };
-        purchases.forEach((po) => (po.payments || []).forEach((p) => addOutflowRange(p.fromStoreBankId, Number(p.amount) || 0, p.date)));
+        purchases.forEach((po) => (po.payments || []).forEach((p) => addOutflowRange(p.fromStoreBankId, Number(p.amount) || 0, p.date || po.date)));
         (deposits || []).forEach((d) => addOutflowRange(d.fromStoreBankId, Number(d.amount) || 0, d.date));
         (expenses || []).forEach((e) => (e.payments || []).forEach((p) => addOutflowRange(p.fromStoreBankId, Number(p.amount) || 0, p.date || e.billDate || e.date)));
         (bankTransfers || []).forEach((t) => addOutflowRange(t.fromBankId, Number(t.amount) || 0, t.date));
+
+        // รวม openingPayments (รับชำระลูกหนี้ยกมา → inflow / จ่ายชำระเจ้าหนี้ยกมา → outflow)
+        customers.forEach((c) => {
+          (c.openingPayments || []).forEach((p) => {
+            if (p.type === "receivable" && p.bankId && p.bankId !== "CASH" && inRange(p.date)) {
+              bankInflowsRange[p.bankId] = (bankInflowsRange[p.bankId] || 0) + (Number(p.amount) || 0);
+            }
+            if (p.type === "payable" && p.bankId && p.bankId !== "CASH") {
+              addOutflowRange(p.bankId, Number(p.amount) || 0, p.date);
+            }
+          });
+        });
 
         const beforeRangeBalance = {};
         if (dateRange) {
@@ -3455,10 +3832,10 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           storeBankAccounts.forEach((b) => {
             let bal = Number(b.openingBalance) || 0;
             sales.forEach((inv) => (inv.payments || []).forEach((p) => {
-              if (p.toStoreBankId === b.id && beforeDate(p.date)) bal += Number(p.amount) || 0;
+              if (p.toStoreBankId === b.id && beforeDate(p.date || inv.date)) bal += Number(p.amount) || 0;
             }));
             purchases.forEach((po) => (po.payments || []).forEach((p) => {
-              if (p.fromStoreBankId === b.id && beforeDate(p.date)) bal -= Number(p.amount) || 0;
+              if (p.fromStoreBankId === b.id && beforeDate(p.date || po.date)) bal -= Number(p.amount) || 0;
             }));
             (deposits || []).forEach((d) => {
               if (d.fromStoreBankId === b.id && beforeDate(d.date)) bal -= Number(d.amount) || 0;
@@ -3470,9 +3847,12 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               if (t.fromBankId === b.id && beforeDate(t.date)) bal -= Number(t.amount) || 0;
               if (t.toBankId === b.id && beforeDate(t.date)) bal += Number(t.amount) || 0;
             });
-            // เงินกู้ยืมที่รับเข้าบัญชีนี้ก่อนช่วงเวลา
-            (loans || []).forEach((l) => {
-              if (l.receivedBankId === b.id && l.startDate && beforeDate(l.startDate)) bal += Number(l.principal) || 0;
+            // openingPayments ยกมา
+            customers.forEach((c) => {
+              (c.openingPayments || []).forEach((p) => {
+                if (p.type === "receivable" && p.bankId === b.id && beforeDate(p.date)) bal += Number(p.amount) || 0;
+                if (p.type === "payable" && p.bankId === b.id && beforeDate(p.date)) bal -= Number(p.amount) || 0;
+              });
             });
             beforeRangeBalance[b.id] = bal;
           });
@@ -3497,34 +3877,31 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
         const unsetGroupTotal = unsetGroupRows.reduce((s, b) => s + b.balance, 0);
 
         // 2. ลูกหนี้ค้างรับ (ยอดคงค้าง ณ ปัจจุบันเสมอ — ตรงกับหน้ารับ/จ่ายชำระ)
-        // ลูกหนี้ค้างรับ — สูตรตรงกับ allSaleRows ในหน้ารับชำระ
-        const totalReceivable = sales.reduce((s, inv) => {
-          const subtotal = inv.items.reduce((ss, it) => ss + (it.net || 0) * (it.price || 0), 0);
-          const ad = subtotal - (inv.discount || 0);
+        // ยอดยกมาลูกหนี้/เจ้าหนี้
+        const openingReceivableTotal = customers.reduce((s, c) => s + (Number(c.openingReceivable) || 0), 0);
+        const openingPayableTotal = customers.reduce((s, c) => s + (Number(c.openingPayable) || 0), 0);
+        const openingRecPaidDash = customers.reduce((s,c)=>(c.openingPayments||[]).filter(p=>p.type==="receivable").reduce((s2,p)=>s2+(Number(p.amount)||0),s),0);
+        const openingPayPaidDash = customers.reduce((s,c)=>(c.openingPayments||[]).filter(p=>p.type==="payable").reduce((s2,p)=>s2+(Number(p.amount)||0),s),0);
+        const openingRecRemainDash = Math.max(0, openingReceivableTotal - openingRecPaidDash);
+        const openingPayRemainDash = Math.max(0, openingPayableTotal - openingPayPaidDash);
+
+        const totalReceivable = openingRecRemainDash + sales.reduce((s, inv) => {
+          const subtotal = inv.items.reduce((ss, it) => ss + (it.net || 0) * (Number(it.price) || 0), 0);
+          const ad = subtotal - (Number(inv.discount) || 0);
           const total = ad + ad * ((Number(inv.vatRate) || 0) / 100);
           const paid = (inv.payments || []).reduce((ss, p) => ss + (Number(p.amount) || 0), 0);
           const remaining = total - paid;
           if (inv.writeOff || remaining <= 0.01) return s;
           return s + remaining;
-        }, 0)
-        // รวมลูกหนี้ยกมา (opening receivable) ที่ยังค้างอยู่
-        + customers.reduce((s, c) => {
-          const amt = Number(c.receivableOpening) || 0;
-          if (amt <= 0) return s;
-          const paid = Number(c.receivableOpeningPaid) || 0;
-          const remaining = amt - paid;
-          return remaining > 0.01 ? s + remaining : s;
         }, 0);
 
-        // เจ้าหนี้ค้างจ่าย — สูตรตรงกับ allPurchaseRows ในหน้ารับชำระ
-        const totalPayable = purchases.filter(po => (po.status || "") !== "ยกเลิก").reduce((s, po) => {
+        // 3. เจ้าหนี้ค้างจ่าย
+        const totalPayable = openingPayRemainDash + purchases.filter(po => (po.status || "") !== "ยกเลิก").reduce((s, po) => {
           const subtotal = po.items.reduce((ss, it) => {
             const qty = Number(it.qty) || 0;
-            const deductPct = Number(it.deductPct) || 0;
-            const deductKg = Number(it.deductKg) || 0;
-            const net = it.net != null ? Number(it.net) : qty - (qty * deductPct / 100) - deductKg;
-            const discountPct = Number(it.discountPct) || 0;
-            return ss + net * (Number(it.price) || 0) * (1 - discountPct / 100);
+            const deduct = Number(it.deduct) || 0;
+            const net = it.deductType === "pct" ? qty * (1 - deduct / 100) : (it.net != null ? Number(it.net) : qty - deduct);
+            return ss + net * (Number(it.price) || 0) * (1 - (Number(it.discountPct) || 0) / 100);
           }, 0);
           const vat = subtotal * ((Number(po.vatRate) || 0) / 100);
           const total = subtotal + vat;
@@ -3532,14 +3909,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
           const remaining = total - paid;
           if (po.writeOff || remaining <= 0.01) return s;
           return s + remaining;
-        }, 0)
-        // รวมเจ้าหนี้ยกมา (opening payable) ที่ยังค้างอยู่
-        + customers.reduce((s, c) => {
-          const amt = Number(c.payableOpening) || 0;
-          if (amt <= 0) return s;
-          const paid = Number(c.payableOpeningPaid) || 0;
-          const remaining = amt - paid;
-          return remaining > 0.01 ? s + remaining : s;
         }, 0);
 
         // 4. เงินมัดจำคงเหลือ (ยอดคงค้าง ณ ปัจจุบัน)
@@ -3568,8 +3937,6 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
 
         // เงินหมุนยอดทั้งหมด = ธนาคาร + เงินสด + เงินมัดจำ + ลูกหนี้ - เจ้าหนี้
         const grandTotal = bankGroupTotal + cashGroupTotal + totalDeposit + totalPrepayment + totalReceivable - totalPayable;
-        // ยอดรวม + สต็อกคงเหลือ
-        const grandTotalWithStock = grandTotal + stockVal;
 
         const cfCard = (label, value, color, bg, sub) => (
           <div style={{ background: bg, borderRadius: 12, padding: "14px 18px", border: `1px solid ${color}33` }}>
@@ -3600,13 +3967,11 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     ["รับล่วงหน้าคงเหลือ", totalPrepayment],
                     ["มูลค่าสต๊อก (ทุน)", stockVal],
                     ["เงินหมุนยอดทั้งหมด (ธนาคาร + เงินสด + เงินมัดจำ + ลูกหนี้ - เจ้าหนี้)", grandTotal],
-                    ["ยอดรวม + สต็อกคงเหลือ", grandTotalWithStock],
                   ];
                   exportExcel(rows, "เงินหมุนร้าน.xlsx", "เงินหมุน");
                 }}
                 onImage={() => printAsPDF("dash-cashflow", "สรุปเงินหมุนร้าน")}
-                lineElementId="dash-cashflow" lineThemeColor="#1e3a5f"
-                lineTitle="สรุปเงินหมุนร้าน"
+                onLine={lineShareHandlers.cashflow}
               />
             </div>
 
@@ -3614,138 +3979,89 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               {/* การ์ดสรุป */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 14 }}>
                 {cfCard(dateRange ? "เงินในธนาคารรวม (ช่วงที่เลือก)" : "เงินในธนาคารรวม", bankGroupTotal, "#185fa5", "#e6f1fb", `${bankGroupRows.length} บัญชี`)}
-                {cfCard("ลูกหนี้ค้างรับ", totalReceivable, "#1A5C2A", "#E8F5EC", "รอรับชำระ (ปัจจุบัน)")}
-                {cfCard("เจ้าหนี้ค้างจ่าย", totalPayable, "#1A6B35", "#E8F5EC", "รอจ่ายชำระ (ปัจจุบัน)")}
-                {cfCard("เงินมัดจำคงเหลือ", totalDeposit, "#1A5C2A", "#E8F5EC", "มัดจำที่ยังไม่ใช้ (ปัจจุบัน)")}
+                {cfCard("ลูกหนี้ค้างรับ", totalReceivable, "#1B3A6B", "#E8EEF8", openingReceivableTotal > 0 ? `รวมยกมา ฿${fmt(openingReceivableTotal)}` : "รอรับชำระ (ปัจจุบัน)")}
+                {cfCard("เจ้าหนี้ค้างจ่าย", totalPayable, "#1E4D8C", "#E8EEF8", openingPayableTotal > 0 ? `รวมยกมา ฿${fmt(openingPayableTotal)}` : "รอจ่ายชำระ (ปัจจุบัน)")}
+                {cfCard("เงินมัดจำคงเหลือ", totalDeposit, "#1B3A6B", "#E8EEF8", "มัดจำที่ยังไม่ใช้ (ปัจจุบัน)")}
                 {cfCard("รับล่วงหน้าคงเหลือ", totalPrepayment, "#1d4ed8", "#eff6ff", "ลูกค้าจ่ายล่วงหน้าที่ยังไม่ได้ตัด")}
-                {cfCard("มูลค่าสต๊อก (ทุน)", stockVal, "#2E8B45", "#E8F5EC", "สินค้าคงเหลือ (ปัจจุบัน)")}
-                {cfCard(dateRange ? "เงินสดรวม (ช่วงที่เลือก)" : "เงินสดรวม", cashGroupTotal, "#1A5C2A", "#E8F5EC", `${cashGroupRows.length} บัญชี`)}
+                {cfCard("มูลค่าสต๊อก (ทุน)", stockVal, "#2855A0", "#E8EEF8", "สินค้าคงเหลือ (ปัจจุบัน)")}
+                {cfCard(dateRange ? "เงินสดรวม (ช่วงที่เลือก)" : "เงินสดรวม", cashGroupTotal, "#1B3A6B", "#E8EEF8", `${cashGroupRows.length} บัญชี`)}
               </div>
 
-              {/* กรอบสรุปยอดเงินหมุนทั้งหมด */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
-                <div style={{ background: "#E8F5EC", borderRadius: 16, padding: "20px 24px", border: "3px solid #1A5C2A" }}>
-                  <div style={{ fontSize: 13, color: "#1A5C2A", marginBottom: 6, fontWeight: 700 }}>เงินหมุนยอดทั้งหมด</div>
-                  <div style={{ fontWeight: 800, fontSize: 28, color: "#1A5C2A", lineHeight: 1.1 }}>฿{fmt(grandTotal)}</div>
-                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6 }}>ธนาคาร + เงินสด + เงินมัดจำ + ลูกหนี้ − เจ้าหนี้</div>
+              {/* กรอบสรุปยอดเงินหมุนทั้งหมด — ใหญ่ที่สุด รวมทุกประเภท */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px,1fr))", gap: 14, marginBottom: 20 }}>
+                <div style={{ background: "#E8EEF8", borderRadius: 16, padding: "24px 28px", border: `3px solid ${grandTotal >= 0 ? "#1B3A6B" : "#2456A4"}` }}>
+                  <div style={{ fontSize: 14, color: grandTotal >= 0 ? "#1B3A6B" : "#2456A4", marginBottom: 6, fontWeight: 700 }}>เงินหมุนยอดทั้งหมด</div>
+                  <div style={{ fontWeight: 900, fontSize: 36, color: grandTotal >= 0 ? "#1B3A6B" : "#2456A4" }}>฿{fmt(grandTotal)}</div>
+                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>ธนาคาร + เงินสด + เงินมัดจำ + ลูกหนี้ − เจ้าหนี้</div>
                 </div>
-                <div style={{ background: "#eff6ff", borderRadius: 16, padding: "20px 24px", border: "3px solid #1e40af" }}>
-                  <div style={{ fontSize: 13, color: "#1e40af", marginBottom: 6, fontWeight: 700 }}>ยอดรวม + สต็อกคงเหลือ</div>
-                  <div style={{ fontWeight: 800, fontSize: 28, color: "#1e40af", lineHeight: 1.1 }}>฿{fmt(grandTotalWithStock)}</div>
-                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 6 }}>ยอดเงินหมุน + มูลค่าสต็อก</div>
+                <div style={{ background: "#e6f9f0", borderRadius: 16, padding: "24px 28px", border: "3px solid #15803d" }}>
+                  <div style={{ fontSize: 14, color: "#15803d", marginBottom: 6, fontWeight: 700 }}>เงินหมุน + สต็อกคงเหลือ</div>
+                  <div style={{ fontWeight: 900, fontSize: 36, color: "#15803d" }}>฿{fmt(grandTotal + stockVal)}</div>
+                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>เงินหมุน ฿{fmt(grandTotal)} + สต็อก ฿{fmt(stockVal)}</div>
                 </div>
               </div>
 
               {/* ตารางรายละเอียดธนาคาร */}
-              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflowX: "auto", marginBottom: 14 }}>
-                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto", marginBottom: 14 }}>
+                <div style={{ background: "#185fa5", color: "#fff", padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
                   ยอดเงินในธนาคารแต่ละบัญชี{dateRange ? ` — ${periodLabel}` : ""}
                 </div>
-                <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 420, fontSize: 12 }}>
                   <thead><tr>
-                    <th style={{ ...thStyle, width: "28%" }}>ธนาคาร</th>
-                    <th style={{ ...thStyle, width: "18%" }}>เลขบัญชี</th>
-                    <th style={{ ...thStyle, textAlign: "right", width: "14%" }}>{dateRange ? "ยอดยกมา (ก่อนช่วง)" : "ยอดยกมา"}</th>
-                    <th style={{ ...thStyle, textAlign: "right", color: "#1A5C2A", width: "13%" }}>รับเข้า</th>
-                    <th style={{ ...thStyle, textAlign: "right", color: "#1A6B35", width: "13%" }}>จ่ายออก</th>
-                    <th style={{ ...thStyle, textAlign: "right", width: "14%" }}>คงเหลือ</th>
+                    <th style={{ ...thStyle, fontSize: 11 }}>ธนาคาร</th>
+                    <th style={{ ...thStyle, textAlign: "right", fontSize: 11, color: "#1B3A6B" }}>รับเข้า</th>
+                    <th style={{ ...thStyle, textAlign: "right", fontSize: 11, color: "#1E4D8C" }}>จ่ายออก</th>
+                    <th style={{ ...thStyle, textAlign: "right", fontSize: 11 }}>คงเหลือ</th>
                   </tr></thead>
                   <tbody>
                     {bankGroupRows.length > 0 && (
-                      <tr style={{ background: "#fff" }}>
-                        <td colSpan={6} style={{ ...tdStyle, fontWeight: 700, color: "#185fa5", display: "flex", alignItems: "center", gap: 6 }}>
-                          <Landmark size={13} /> ธนาคาร
-                        </td>
+                      <tr style={{ background: "#f0f4f8" }}>
+                        <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#185fa5", fontSize: 11 }}>🏦 ธนาคาร</td>
                       </tr>
                     )}
                     {bankGroupRows.map((b) => (
                       <tr key={b.id}>
-                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 24 }}>{b.bankName}</td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 12 }}>{b.accountNo}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{b.ob !== 0 ? `฿${fmt(b.ob)}` : "-"}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A", fontWeight: 600 }}>฿{fmt(b.inflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35", fontWeight: 600 }}>฿{fmt(b.outflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 14, color: b.balance >= 0 ? "#185fa5" : "#2E7A42" }}>฿{fmt(b.balance)}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 16, fontSize: 12 }}>{b.bankName}<br/><span style={{ fontFamily: "monospace", fontSize: 10, color: "#6b7280" }}>{b.accountNo}</span></td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.inflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.outflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 13, color: b.balance >= 0 ? "#185fa5" : "#2456A4" }}>฿{fmt(b.balance)}</td>
                       </tr>
                     ))}
-
-
                     {cashGroupRows.length > 0 && (
-                      <tr style={{ background: "#fff" }}>
-                        <td colSpan={6} style={{ ...tdStyle, fontWeight: 700, color: "#1A5C2A", display: "flex", alignItems: "center", gap: 6 }}>
-                          <Wallet size={13} /> เงินสด
-                        </td>
+                      <tr style={{ background: "#f0f4f8" }}>
+                        <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#1B3A6B", fontSize: 11 }}>💵 เงินสด</td>
                       </tr>
                     )}
                     {cashGroupRows.map((b) => (
                       <tr key={b.id}>
-                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 24 }}>{b.bankName}</td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 12 }}>{b.accountNo}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{b.ob !== 0 ? `฿${fmt(b.ob)}` : "-"}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A", fontWeight: 600 }}>฿{fmt(b.inflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35", fontWeight: 600 }}>฿{fmt(b.outflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 14, color: b.balance >= 0 ? "#185fa5" : "#2E7A42" }}>฿{fmt(b.balance)}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 16, fontSize: 12 }}>{b.bankName}<br/><span style={{ fontFamily: "monospace", fontSize: 10, color: "#6b7280" }}>{b.accountNo}</span></td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.inflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.outflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 13, color: b.balance >= 0 ? "#185fa5" : "#2456A4" }}>฿{fmt(b.balance)}</td>
                       </tr>
                     ))}
-
-
                     {unsetGroupRows.length > 0 && (
                       <tr style={{ background: "#f3f4f6" }}>
-                        <td colSpan={6} style={{ ...tdStyle, fontWeight: 700, color: "#1A5C2A" }}>
-                          ยังไม่ระบุประเภท
-                        </td>
+                        <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#1B3A6B", fontSize: 11 }}>ยังไม่ระบุประเภท</td>
                       </tr>
                     )}
                     {unsetGroupRows.map((b) => (
                       <tr key={b.id}>
-                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 24 }}>{b.bankName}</td>
-                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 12 }}>{b.accountNo}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{b.ob !== 0 ? `฿${fmt(b.ob)}` : "-"}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A", fontWeight: 600 }}>฿{fmt(b.inflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35", fontWeight: 600 }}>฿{fmt(b.outflow)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 14, color: b.balance >= 0 ? "#185fa5" : "#2E7A42" }}>฿{fmt(b.balance)}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600, paddingLeft: 16, fontSize: 12 }}>{b.bankName}<br/><span style={{ fontFamily: "monospace", fontSize: 10, color: "#6b7280" }}>{b.accountNo}</span></td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.inflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C", fontWeight: 600, fontSize: 12 }}>฿{fmt(b.outflow)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 13, color: b.balance >= 0 ? "#185fa5" : "#2456A4" }}>฿{fmt(b.balance)}</td>
                       </tr>
                     ))}
-                    {unsetGroupRows.length > 0 && (
-                      <tr style={{ background: "#f9fafb" }}>
-                        <td colSpan={5} style={{ ...tdStyle, fontWeight: 600, color: "#1A5C2A", paddingLeft: 24 }}>รวมกลุ่มยังไม่ระบุประเภท</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(unsetGroupTotal)}</td>
-                      </tr>
-                    )}
-
-                    {bankRows.length === 0 && <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ยังไม่มีบัญชีธนาคาร</td></tr>}
+                    {bankRows.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ยังไม่มีบัญชีธนาคาร</td></tr>}
                   </tbody>
                   {bankRows.length > 0 && (
                     <tfoot>
-
-                      {(() => {
-                        const depOpening = customers.reduce((s,c) => s + (Number(c.depositOpening)||0), 0);
-                        const depIn = (deposits||[]).reduce((s,d) => s + (Number(d.amount)||0), 0);
-                        const depOut = purchases.reduce((s,po) => s + (po.payments||[]).filter(p=>p.fromStoreBankId==="DEPOSIT").reduce((s2,p)=>s2+(Number(p.amount)||0),0), 0);
-                        return (
-                          <tr style={{ background: "#fff" }}>
-                            <td colSpan={2} style={{ ...tdStyle, fontWeight: 700, color: "#1A5C2A" }}>เงินมัดจำคงเหลือรวม</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#6b7280" }}>฿{fmt(depOpening)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>+฿{fmt(depIn)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>-฿{fmt(depOut)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 15, color: "#1A5C2A" }}>฿{fmt(totalDeposit)}</td>
-                          </tr>
-                        );
-                      })()}
-                      <tr style={{ borderTop: "3px solid #185fa5" }}>
-                        <td colSpan={2} style={{ ...tdStyle, fontWeight: 700, color: "#185fa5", fontSize: 14 }}>ยอดรวมทั้งหมด (ธนาคาร + เงินสด + มัดจำ)</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#374151", fontSize: 14 }}>
-                          ฿{fmt(bankRows.reduce((s,b)=>s+b.ob,0) + customers.reduce((s,c)=>s+(Number(c.depositOpening)||0),0))}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A", fontSize: 14 }}>
-                          +฿{fmt(bankRows.reduce((s,b)=>s+b.inflow,0) + (deposits||[]).reduce((s,d)=>s+(Number(d.amount)||0),0))}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35", fontSize: 14 }}>
-                          -฿{fmt(bankRows.reduce((s,b)=>s+b.outflow,0) + purchases.reduce((s,po)=>s+(po.payments||[]).filter(p=>p.fromStoreBankId==="DEPOSIT").reduce((s2,p)=>s2+(Number(p.amount)||0),0),0))}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5", fontSize: 15 }}>
-                          ฿{fmt(totalBankBalance + totalDeposit)}
-                        </td>
+                      <tr style={{ borderTop: "3px solid #185fa5", background: "#e6f1fb" }}>
+                        <td style={{ ...tdStyle, fontWeight: 700, color: "#185fa5", fontSize: 13 }}>ยอดรวม (ธนาคาร + เงินสด)</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B", fontSize: 13 }}>+฿{fmt(bankRows.reduce((s,b)=>s+b.inflow,0))}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C", fontSize: 13 }}>-฿{fmt(bankRows.reduce((s,b)=>s+b.outflow,0))}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5", fontSize: 14 }}>฿{fmt(totalBankBalance)}</td>
                       </tr>
                     </tfoot>
                   )}
@@ -3753,18 +4069,18 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               </div>
 
               {/* ตารางสรุปรวม */}
-              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
-                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
+              <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+                <div style={{ background: "#0F2548", color: "#fff", padding: "12px 16px", fontWeight: 700, fontSize: 14 }}>
                   สรุปเงินหมุนเวียนร้าน
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <tbody>
                     {[
                       { label: "เงินในธนาคารรวม", value: bankGroupTotal, color: "#185fa5", sign: "+" },
-                      { label: "เงินสดรวม", value: cashGroupTotal, color: "#1A5C2A", sign: "+" },
-                      { label: "ลูกหนี้การค้า (ค้างรับ)", value: totalReceivable, color: "#1A5C2A", sign: "+" },
-                      { label: "เจ้าหนี้การค้า (ค้างจ่าย)", value: totalPayable, color: "#1A6B35", sign: "−" },
-                      { label: "เงินมัดจำคงเหลือ", value: totalDeposit, color: "#1A5C2A", sign: "+" },
+                      { label: "เงินสดรวม", value: cashGroupTotal, color: "#1B3A6B", sign: "+" },
+                      { label: "ลูกหนี้การค้า (ค้างรับ)", value: totalReceivable, color: "#1B3A6B", sign: "+" },
+                      { label: "เจ้าหนี้การค้า (ค้างจ่าย)", value: totalPayable, color: "#1E4D8C", sign: "−" },
+                      { label: "เงินมัดจำคงเหลือ", value: totalDeposit, color: "#1B3A6B", sign: "+" },
                     ].map((r) => (
                       <tr key={r.label}>
                         <td style={{ ...tdStyle, display: "flex", alignItems: "center", gap: 8 }}>
@@ -3776,242 +4092,19 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: "#E8F5EC", borderTop: "2px solid #0D3D1A" }}>
+                    <tr style={{ background: grandTotal >= 0 ? "#E8EEF8" : "#E8EEF8", borderTop: "2px solid #0F2548" }}>
                       <td style={{ ...tdStyle, fontWeight: 700, fontSize: 15 }}>เงินหมุนยอดทั้งหมด</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 18, color: "#1A5C2A" }}>฿{fmt(grandTotal)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 18, color: grandTotal >= 0 ? "#1B3A6B" : "#2456A4" }}>฿{fmt(grandTotal)}</td>
                     </tr>
-                    <tr style={{ background: "#eff6ff", borderTop: "1px solid #bfdbfe" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700, fontSize: 15 }}>ยอดรวม + สต็อกคงเหลือ</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 18, color: "#1e40af" }}>฿{fmt(grandTotalWithStock)}</td>
+                    <tr style={{ background: "#f9fafb" }}>
+                      <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>+ มูลค่าสต๊อกสินค้า (ทุน) — ไม่รวมในเงินสด</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280", fontSize: 12 }}>฿{fmt(stockVal)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
 
 
-            </div>
-          </>
-        );
-      })()}
-
-      {/* ===== กำไร/ขาดทุน ===== */}
-      {dashSubTab === "pnl" && (() => {
-        // กรองช่วงเวลา
-        const inRange = (d) => (!pnlDateFrom || d >= pnlDateFrom) && (!pnlDateTo || d <= pnlDateTo);
-
-        // ยอดขาย (จากระบบ — ยอดตามบิลที่อนุมัติแล้ว)
-        const totalSaleQty = sales.reduce((s, inv) => s + inv.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
-        const totalSaleQtyRange = sales.filter(inv => inRange(inv.date)).reduce((s, inv) => s + inv.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
-        const totalSaleValue = sales.filter(inv => inRange(inv.date)).reduce((s, inv) => {
-          const sub = inv.items.reduce((ss, it) => ss + (it.net || 0) * (it.price || 0), 0);
-          const ad = sub - (inv.discount || 0);
-          return s + ad + ad * ((Number(inv.vatRate) || 0) / 100);
-        }, 0);
-
-        // ยอดซื้อ (ต้นทุนสินค้าขาย — ใช้ยอดตามบิลที่อนุมัติ)
-        const totalBuyQty = purchases.filter(po => inRange(po.date) && (po.status || "") !== "ยกเลิก").reduce((s, po) => s + po.items.reduce((ss, it) => ss + (Number(it.qty) || 0), 0), 0);
-        const totalBuyValue = purchases.filter(po => inRange(po.date) && (po.status || "") !== "ยกเลิก").reduce((s, po) => {
-          const sub = po.items.reduce((ss, it) => {
-            const qty = Number(it.qty) || 0;
-            const deductPct = Number(it.deductPct) || 0;
-            const deductKg = Number(it.deductKg) || 0;
-            const net = it.net != null ? Number(it.net) : qty - (qty * deductPct / 100) - deductKg;
-            return ss + net * (Number(it.price) || 0) * (1 - (Number(it.discountPct) || 0) / 100);
-          }, 0);
-          return s + sub + sub * ((Number(po.vatRate) || 0) / 100);
-        }, 0);
-
-        // ค่าใช้จ่าย (จากระบบ)
-        const totalExpValue = (expenses || []).filter(e => inRange(e.billDate || e.date)).reduce((s, e) => {
-          const items = e.items || [];
-          return s + items.reduce((ss, it) => {
-            const amt = Number(it.amount) || 0;
-            const vat = it.vatEnabled ? amt * 0.07 : 0;
-            const wht = amt * ((Number(it.whtRate) || 0) / 100);
-            return ss + amt + vat - wht;
-          }, 0);
-        }, 0);
-
-        // กำไร/ขาดทุน
-        const grossProfit = totalSaleValue - totalBuyValue; // กำไรขั้นต้น (ในระบบ)
-        const totalCostAll = totalBuyValue + pnlOpenCost; // ต้นทุนรวม (ในระบบ + ยกมา)
-        const totalRevenueAll = totalSaleValue + pnlOpenRevenue; // รายได้รวม (ในระบบ + ยกมา)
-        const grossProfitAll = totalRevenueAll - totalCostAll; // กำไรขั้นต้นรวม
-        const operatingProfit = grossProfitAll - totalExpValue; // กำไรจากการดำเนินงาน
-        const netProfit = operatingProfit + pnlOpenProfit - landDebt; // กำไร/ขาดทุนสุทธิ
-
-        const pnlColor = (v) => v >= 0 ? "#166534" : "#991b1b";
-        const pnlBg = (v) => v >= 0 ? "#f0fdf4" : "#fff1f2";
-
-        return (
-          <>
-            {/* header + date range */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <label style={{ fontSize: 13, color: "#374151" }}>ช่วงเวลา</label>
-                <input type="date" value={pnlDateFrom} onChange={e => setPnlFrom(e.target.value)}
-                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 13 }} />
-                <span style={{ fontSize: 13, color: "#6b7280" }}>ถึง</span>
-                <input type="date" value={pnlDateTo} onChange={e => setPnlTo(e.target.value)}
-                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 13 }} />
-              </div>
-              <ExportToolbar
-                onPDF={() => printAsPDF("dash-pnl", "รายงานกำไรขาดทุน")}
-                onExcel={() => {
-                  const rows = [
-                    ["รายการ", "จำนวน (กก.)", "จำนวนเงิน (บาท)"],
-                    ["ยอดซื้อ", fmt(totalBuyQty), fmt(totalBuyValue)],
-                    ["ยอดขาย", fmt(totalSaleQtyRange), fmt(totalSaleValue)],
-                    ["ค่าใช้จ่าย", "", fmt(totalExpValue)],
-                    ["มูลค่าลงทุนที่ดิน", "", fmt(landDebt)],
-                    [""],
-                    ["กำไรขั้นต้น (ขาย - ซื้อ)", "", fmt(grossProfit)],
-                    ["กำไรจากการดำเนินงาน (ขั้นต้น - ค่าใช้จ่าย)", "", fmt(operatingProfit)],
-                    ["กำไร/ขาดทุนสุทธิ (หักลงทุนที่ดิน)", "", fmt(netProfit)],
-                  ];
-                  exportExcel(rows, "รายงานกำไรขาดทุน.xlsx", "P&L");
-                }}
-                onImage={() => printAsPDF("dash-pnl", "รายงานกำไรขาดทุน")}
-                lineElementId="dash-pnl"
-                lineTitle="รายงานกำไร/ขาดทุน"
-                lineThemeColor="#065f46"
-              />
-            </div>
-
-            <div id="dash-pnl">
-              {/* summary cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 20 }}>
-                {[
-                  { label: "ยอดซื้อรวม", sub: `${fmt(totalBuyQty)} กก.`, value: totalBuyValue, icon: ArrowDownToLine, color: "#1e40af", bg: "#dbeafe" },
-                  { label: "ยอดขายรวม", sub: `${fmt(totalSaleQtyRange)} กก.`, value: totalSaleValue, icon: ArrowUpFromLine, color: "#166534", bg: "#dcfce7" },
-                  { label: "ค่าใช้จ่ายรวม", sub: "ประจำงวด", value: totalExpValue, icon: Receipt, color: "#92400e", bg: "#fef3c7" },
-                  { label: "มูลค่าลงทุนที่ดิน", sub: "ยกมา", value: landDebt, icon: TrendingUp, color: "#6b7280", bg: "#f3f4f6" },
-                ].map((c, i) => {
-                  const Icon = c.icon;
-                  return (
-                    <div key={i} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${theme.border}`, padding: "16px 18px" }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 9, background: c.bg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
-                        <Icon size={20} color={c.color} />
-                      </div>
-                      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 2 }}>{c.label}</div>
-                      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 6 }}>{c.sub}</div>
-                      <div style={{ fontSize: 26, fontWeight: 900, color: c.color, lineHeight: 1 }}>฿{fmt(c.value)}</div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* ตารางกำไรขาดทุน */}
-              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
-                <div style={{ background: theme.header, color: theme.headerText, padding: "12px 20px", fontSize: 15, fontWeight: 700 }}>
-                  รายงานกำไร/ขาดทุน — {pnlDateFrom} ถึง {pnlDateTo}
-                </div>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <tbody>
-                    {/* ซื้อ-ขาย ในระบบ */}
-                    <tr>
-                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>รายรับ / รายจ่ายสินค้า (ในระบบ)</td>
-                    </tr>
-                    {[
-                      { label: "ยอดซื้อ (ในระบบ)", qty: fmt(totalBuyQty), value: totalBuyValue, neg: true },
-                      { label: "ยอดขาย (ในระบบ)", qty: fmt(totalSaleQtyRange), value: totalSaleValue, neg: false },
-                    ].map((r, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{r.qty} กก.</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.neg ? "#1e40af" : "#166534", fontSize: 16 }}>฿{fmt(r.value)}</td>
-                      </tr>
-                    ))}
-
-                    {/* ยอดยกมา */}
-                    <tr>
-                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#fef9c3" }}>ยอดยกมา (ก่อนเริ่มใช้ระบบ / ปีก่อน)</td>
-                    </tr>
-                    {[
-                      { label: "ต้นทุนยกมา", value: pnlOpenCost, setter: setPnlOpenCost, color: "#1e40af" },
-                      { label: "รายได้ยกมา", value: pnlOpenRevenue, setter: setPnlOpenRevenue, color: "#166534" },
-                    ].map((r, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? "#fffbeb" : "#fefce8" }}>
-                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
-                        <td style={tdStyle}></td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>
-                          <input type="number" value={r.value || ""} placeholder="0"
-                            onChange={e => r.setter(e.target.value)}
-                            style={{ width: 160, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
-                        </td>
-                      </tr>
-                    ))}
-
-                    {/* รวมทั้งหมด */}
-                    <tr style={{ background: "#f0fdf4", borderTop: "2px solid #86efac" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>ต้นทุนรวมทั้งหมด</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1e40af", fontSize: 16 }}>฿{fmt(totalCostAll)}</td>
-                    </tr>
-                    <tr style={{ background: "#f0fdf4" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>รายได้รวมทั้งหมด</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#166534", fontSize: 16 }}>฿{fmt(totalRevenueAll)}</td>
-                    </tr>
-
-                    {/* กำไรขั้นต้น */}
-                    <tr style={{ background: pnlBg(grossProfitAll), borderTop: "2px solid #e5e7eb" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>กำไรขั้นต้น (รายได้รวม − ต้นทุนรวม)</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, fontSize: 18, color: pnlColor(grossProfitAll) }}>
-                        {grossProfitAll < 0 ? `(฿${fmt(Math.abs(grossProfitAll))})` : `฿${fmt(grossProfitAll)}`}
-                      </td>
-                    </tr>
-
-                    {/* ค่าใช้จ่าย */}
-                    <tr>
-                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>ค่าใช้จ่ายดำเนินงาน</td>
-                    </tr>
-                    <tr>
-                      <td style={{ ...tdStyle, color: "#374151" }}>ค่าใช้จ่ายประจำงวด (ในระบบ)</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#92400e", fontSize: 16 }}>฿{fmt(totalExpValue)}</td>
-                    </tr>
-
-                    {/* กำไรดำเนินงาน */}
-                    <tr style={{ background: pnlBg(operatingProfit), borderTop: "2px solid #e5e7eb" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>กำไรจากการดำเนินงาน</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, fontSize: 18, color: pnlColor(operatingProfit) }}>
-                        {operatingProfit < 0 ? `(฿${fmt(Math.abs(operatingProfit))})` : `฿${fmt(operatingProfit)}`}
-                      </td>
-                    </tr>
-
-                    {/* รายการพิเศษ */}
-                    <tr>
-                      <td colSpan={3} style={{ ...tdStyle, fontWeight: 700, color: "#374151", fontSize: 13, background: "#f1f5f9" }}>รายการพิเศษ / ยอดยกมา</td>
-                    </tr>
-                    {[
-                      { label: "กำไร/ขาดทุนยกมา (บวก=กำไรยกมา, ลบ=ขาดทุนยกมา)", value: pnlOpenProfit, setter: setPnlOpenProfit },
-                      { label: "มูลค่าลงทุนที่ดิน (หักออก)", value: landDebt, setter: setLandDebt },
-                    ].map((r, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? "#fafafa" : "#f3f4f6" }}>
-                        <td style={{ ...tdStyle, color: "#374151" }}>{r.label}</td>
-                        <td style={tdStyle}></td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>
-                          <input type="number" value={r.value || ""} placeholder="0"
-                            onChange={e => r.setter(e.target.value)}
-                            style={{ width: 160, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
-                        </td>
-                      </tr>
-                    ))}
-
-                    {/* กำไรสุทธิ */}
-                    <tr style={{ background: pnlBg(netProfit), borderTop: "3px solid #374151" }}>
-                      <td style={{ ...tdStyle, fontWeight: 800, fontSize: 16 }}>กำไร/ขาดทุนสุทธิ</td>
-                      <td style={tdStyle}></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 900, fontSize: 22, color: pnlColor(netProfit) }}>
-                        {netProfit < 0 ? `(฿${fmt(Math.abs(netProfit))})` : `฿${fmt(netProfit)}`}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
             </div>
           </>
         );
@@ -4061,7 +4154,7 @@ function ProductsTab({ products, setProducts, unitOptions, setUnitOptions, produ
     return `${MONTH_NAMES_TH[Number(m)]} ${y}`;
   };
 
- const openAdd = () => { let newId = genSeqId("P", products); while (products.some((p) => p.id === newId)) { newId = genSeqId("P", [...products, { id: newId }]); } setForm({ id: newId, name: "", type: productCategories[0] || "", unit: unitOptions[0] || "กก.", openingQty: 0, openingCost: 0, openingMonth: "", buyPrice: 0, vipPrice: 0 }); setModal({ mode: "add" }); };
+  const openAdd = () => { let newId = genSeqId("P", products); while (products.some((p) => p.id === newId)) { newId = genSeqId("P", [...products, { id: newId }]); } setForm({ id: newId, name: "", type: productCategories[0] || "", unit: unitOptions[0] || "กก.", openingQty: 0, openingCost: 0, openingMonth: "", buyPrice: 0, vipPrice: 0 }); setModal({ mode: "add" }); };
   const openEdit = (item) => { setForm({ openingQty: 0, openingCost: 0, openingMonth: "", buyPrice: 0, vipPrice: 0, ...item }); setModal({ mode: "edit", item }); };
 
   // เมื่อพิมพ์ประเภทสินค้าใหม่ที่ยังไม่มี ให้เพิ่มเข้าฐานข้อมูล productCategories ทันที (ใช้ได้ทุกเครื่องหลังจากนี้)
@@ -4087,12 +4180,25 @@ const save = async () => {
   const cleaned = { ...form, openingQty: Number(form.openingQty) || 0, openingCost: Number(form.openingCost) || 0, buyPrice: Number(form.buyPrice) || 0, vipPrice: Number(form.vipPrice) || 0 };
 
   if (modal.mode === "add") {
-    setProducts([...products, cleaned]); // อัปเดตหน้าจอทันที
-    const { error } = await insertProduct(cleaned);
+    // ตรวจสอบรหัสซ้ำใน local state ก่อน
+    let finalCleaned = cleaned;
+    if (products.some((p) => p.id === finalCleaned.id)) {
+      finalCleaned = { ...finalCleaned, id: genSeqId("P", products) };
+    }
+    setProducts([...products, finalCleaned]); // อัปเดตหน้าจอทันที
+    let { error } = await insertProduct(finalCleaned);
     if (error) {
-      alert("บันทึกสินค้าไม่สำเร็จ กรุณาลองใหม่ (อาจมีรหัสสินค้านี้อยู่แล้ว)");
-      setProducts(products); // ย้อนกลับ
-      return;
+      // รหัสซ้ำใน Supabase — สร้างรหัสใหม่แล้ว retry อัตโนมัติ
+      const allIds = [...products.map((p) => p.id), finalCleaned.id];
+      const retryId = genSeqId("P", allIds.map((id) => ({ id })));
+      const retried = { ...finalCleaned, id: retryId };
+      setProducts(products.map((p) => p.id === finalCleaned.id ? retried : p));
+      const { error: err2 } = await insertProduct(retried);
+      if (err2) {
+        alert("บันทึกสินค้าไม่สำเร็จ กรุณาลองใหม่");
+        setProducts(products); // ย้อนกลับ
+        return;
+      }
     }
   } else {
     setProducts(products.map((p) => (p.id === modal.item.id ? cleaned : p)));
@@ -4141,7 +4247,7 @@ const save = async () => {
               <th style={thStyle}>ชื่อสินค้า</th>
               <th style={thStyle}>ประเภท</th>
               <th style={thStyle}>หน่วย</th>
-              <th style={{ ...thStyle, textAlign: "right", color: "#1A5C2A" }}>ราคาหน้าร้าน/หน่วย</th>
+              <th style={{ ...thStyle, textAlign: "right", color: "#1B3A6B" }}>ราคาหน้าร้าน/หน่วย</th>
               <th style={{ ...thStyle, textAlign: "right", color: "#534ab7" }}>ราคา VIP/หน่วย</th>
               <th style={{ ...thStyle, textAlign: "right" }}>ยอดยกมา (จำนวน)</th>
               <th style={{ ...thStyle, textAlign: "right" }}>ต้นทุน/หน่วย</th>
@@ -4181,7 +4287,7 @@ const save = async () => {
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                   <td style={tdStyle}><Badge text={p.type} /></td>
                   <td style={tdStyle}>{p.unit}</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>{inlinePriceCell("buyPrice", "#1A5C2A")}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>{inlinePriceCell("buyPrice", "#1B3A6B")}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{inlinePriceCell("vipPrice", "#534ab7")}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.openingQty || 0)}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.openingCost || 0)}</td>
@@ -4277,7 +4383,7 @@ const save = async () => {
             </Field>
           </div>
           <div style={{ background: "#fffbeb", borderRadius: 8, padding: "12px 16px", marginTop: 8, border: "1px solid #fde68a" }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#1A5C2A" }}>ราคารับซื้อ (กดที่ช่องราคาในตารางเพื่อแก้เร็วขึ้น)</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#1B3A6B" }}>ราคารับซื้อ (กดที่ช่องราคาในตารางเพื่อแก้เร็วขึ้น)</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <Field label={`ราคาหน้าร้าน/หน่วย (บาท/${form.unit || "หน่วย"})`}>
                 <input type="number" min={0} style={inputStyle} value={form.buyPrice || 0} onChange={(e) => setForm({ ...form, buyPrice: e.target.value })} placeholder="0" />
@@ -4289,7 +4395,7 @@ const save = async () => {
           </div>
 
           <div style={{ background: "#f0f9f5", borderRadius: 8, padding: "12px 16px", marginTop: 8 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#1A5C2A" }}>ยอดคงเหลือยกมา (ก่อนเริ่มใช้ระบบ)</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#1B3A6B" }}>ยอดคงเหลือยกมา (ก่อนเริ่มใช้ระบบ)</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
               <Field label={`จำนวนยกมา (${form.unit || "หน่วย"})`}>
                 <input type="number" min={0} style={inputStyle} value={form.openingQty} onChange={(e) => setForm({ ...form, openingQty: e.target.value })} placeholder="0" />
@@ -4301,11 +4407,11 @@ const save = async () => {
             <Field label="ของเดือน">
               <input type="month" style={inputStyle} value={form.openingMonth || ""} onChange={(e) => setForm({ ...form, openingMonth: e.target.value })} />
             </Field>
-            <p style={{ fontSize: 11, color: "#1A5C2A", margin: "0 0 4px" }}>
+            <p style={{ fontSize: 11, color: "#1B3A6B", margin: "0 0 4px" }}>
               * ระบุเดือนที่ยอดยกมานี้มีผล — รายงาน/แดชบอร์ดของเดือนนั้นๆ จะนับรวมยอดนี้เข้าไปด้วย
             </p>
             {(Number(form.openingQty) > 0 || Number(form.openingCost) > 0) && (
-              <div style={{ fontSize: 13, color: "#1A5C2A", fontWeight: 600, marginTop: 6 }}>
+              <div style={{ fontSize: 13, color: "#1B3A6B", fontWeight: 600, marginTop: 6 }}>
                 มูลค่ายกมา: ฿{fmt((Number(form.openingQty) || 0) * (Number(form.openingCost) || 0))}
               </div>
             )}
@@ -4325,7 +4431,7 @@ function CustomersTab({ customers, setCustomers }) {
   const [search, setSearch] = useState("");
   const [importModal, setImportModal] = useState(false);
   const [viewIdCard, setViewIdCard] = useState(null); // รูปบัตรประชาชนที่เปิดดูเต็ม
-  const blank = { id: "", name: "", taxId: "", address: "", phone: "", line: "", email: "", deliveries: 0, bankAccounts: [], idCardImage: "" };
+  const blank = { id: "", name: "", taxId: "", address: "", phone: "", line: "", email: "", deliveries: 0, bankAccounts: [], idCardImage: "", openingReceivable: 0, openingPayable: 0 };
   const [form, setForm] = useState(blank);
 
   const filtered = [...customers].filter((c) => c.name.includes(search) || c.id.includes(search) || (c.phone || "").includes(search)).sort((a, b) => { const na = parseInt((a.id || "").replace(/\D/g, "")) || 0; const nb = parseInt((b.id || "").replace(/\D/g, "")) || 0; return nb - na; });
@@ -4491,23 +4597,22 @@ function CustomersTab({ customers, setCustomers }) {
               <input type="number" style={inputStyle} value={form.deliveries} onChange={(e) => setForm({ ...form, deliveries: e.target.value })} />
             </Field>
           </div>
-          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "12px 16px", marginTop: 8 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: "#14532d", marginBottom: 10 }}>ยอดยกมา (ค้างจ่าย/ค้างรับจากก่อนเริ่มใช้ระบบ)</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
-              <Field label="ลูกหนี้ยกมา — ค้างรับจากลูกค้ารายนี้ (บาท)">
-                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.receivableOpening || ""} placeholder="0"
-                  onChange={(e) => setForm({ ...form, receivableOpening: e.target.value })} />
-              </Field>
-              <Field label="เจ้าหนี้ยกมา — ค้างจ่ายให้ลูกค้ารายนี้ (บาท)">
-                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.payableOpening || ""} placeholder="0"
-                  onChange={(e) => setForm({ ...form, payableOpening: e.target.value })} />
-              </Field>
-            </div>
-            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>* ยอดนี้จะแสดงในหน้ารับชำระ/จ่ายชำระเพื่อให้ตัดชำระได้ — เมื่อชำระครบแล้วยอดจะหายไปเอง</div>
-          </div>
           <Field label="ที่อยู่">
             <textarea style={{ ...inputStyle, minHeight: 60, resize: "vertical" }} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </Field>
+
+          {/* ยอดยกมา */}
+          <div style={{ background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb", padding: "14px 16px", marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#374151" }}>ยอดยกมา (Opening Balance)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <Field label="ลูกหนี้ยกมา (บาท) — ลูกค้าค้างจ่ายเรา">
+                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.openingReceivable || ""} placeholder="0" onChange={(e) => setForm({ ...form, openingReceivable: Number(e.target.value) || 0 })} />
+              </Field>
+              <Field label="เจ้าหนี้ยกมา (บาท) — เราค้างจ่ายลูกค้า">
+                <input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={form.openingPayable || ""} placeholder="0" onChange={(e) => setForm({ ...form, openingPayable: Number(e.target.value) || 0 })} />
+              </Field>
+            </div>
+          </div>
 
           {/* รูปภาพบัตรประชาชน */}
           <div style={{ marginTop: 8, marginBottom: 16 }}>
@@ -4566,12 +4671,12 @@ function CustomersTab({ customers, setCustomers }) {
 // PURCHASES TAB (ใบรับสินค้า)
 // ===================================================================
 function PurchasesTab({ products, customers, purchases, setPurchases, storeBankAccounts, deposits, companySettings }) {
+  const isMobile = useIsMobile();
   const [modal, setModal] = useState(null); // {mode:'add'|'edit'|'view', item}
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [expanded, setExpanded] = useState(null);
-  const isMobile = useIsMobileView();
 
   const blankItem = () => ({ productId: "", qty: 0, deductPct: 0, deductKg: 0, price: 0 });
   const blankPayment = () => ({
@@ -4685,8 +4790,8 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
 
   const statusBadge = (status) => {
     if (status === "อนุมัติแล้ว") return { bg: "#eaf3de", color: "#27500a", icon: CheckCircle2 };
-    if (status === "ยกเลิก") return { bg: "#E8F5EC", color: "#791f1f", icon: XCircle };
-    return { bg: "#E8F5EC", color: "#1A5C2A", icon: Clock };
+    if (status === "ยกเลิก") return { bg: "#E8EEF8", color: "#791f1f", icon: XCircle };
+    return { bg: "#E8EEF8", color: "#1B3A6B", icon: Clock };
   };
 
   return (
@@ -4725,8 +4830,8 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
           const total = grandTotal(po);
           const remaining = total - paid;
           const payBadge = (po.writeOff || remaining <= 0.01) ? { bg: "#eaf3de", color: "#27500a", icon: CheckCircle2, label: "ชำระแล้ว" }
-            : paid > 0.01 ? { bg: "#E8F5EC", color: "#1A5C2A", icon: Clock, label: "ชำระบางส่วน" }
-            : { bg: "#E8F5EC", color: "#791f1f", icon: Clock, label: "ค้างจ่าย" };
+            : paid > 0.01 ? { bg: "#E8EEF8", color: "#1B3A6B", icon: Clock, label: "ชำระบางส่วน" }
+            : { bg: "#E8EEF8", color: "#791f1f", icon: Clock, label: "ค้างจ่าย" };
           const PIcon = payBadge.icon;
           const isExpanded = expanded === po.id;
 
@@ -4759,7 +4864,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                     {(po.vatRate > 0) && <div style={{ fontSize: 11, color: "#9ca3af" }}>ก่อน VAT: ฿{fmt(subtotalBeforeVat(po))}</div>}
                     {(po.vatRate > 0) && <div style={{ fontSize: 11, color: "#9ca3af" }}>VAT {po.vatRate}%: +฿{fmt(vatAmount(po))}</div>}
                     <div style={{ fontSize: 12, color: "#9ca3af" }}>ยอดรวม</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: "#1A6B35" }}>฿{fmt(total)}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(total)}</div>
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {(po.status || "รออนุมัติ") === "อนุมัติแล้ว" ? (
@@ -4818,7 +4923,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                             <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(deductDisplay)}</td>
                             <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(net)}</td>
                             <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(it.price)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", color: discountPct > 0 ? "#1A6B35" : "#9ca3af" }}>{discountPct > 0 ? `${discountPct}%` : "—"}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", color: discountPct > 0 ? "#1E4D8C" : "#9ca3af" }}>{discountPct > 0 ? `${discountPct}%` : "—"}</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(net * discountedPrice)}</td>
                           </tr>
                         );
@@ -4828,15 +4933,15 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
 
                   <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 16px", marginBottom: 12, fontSize: 13, maxWidth: 360 }}>
                     <Row label="ยอดก่อน VAT" value={`฿${fmt(subtotalBeforeVat(po))}`} />
-                    {(po.vatRate > 0) && <Row label={`VAT ${po.vatRate}%`} value={`+฿${fmt(vatAmount(po))}`} color="#1A6B35" />}
+                    {(po.vatRate > 0) && <Row label={`VAT ${po.vatRate}%`} value={`+฿${fmt(vatAmount(po))}`} color="#1E4D8C" />}
                     <Row label="ยอดรวมที่ต้องชำระ" value={`฿${fmt(total)}`} bold />
                     <Row label="ชำระแล้ว" value={`฿${fmt(paid)}`} />
-                    <Row label="คงค้าง" value={`฿${fmt(remaining)}`} bold color={remaining > 0 ? "#2E7A42" : "#27500a"} />
+                    <Row label="คงค้าง" value={`฿${fmt(remaining)}`} bold color={remaining > 0 ? "#2456A4" : "#27500a"} />
                   </div>
 
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {(po.status || "รออนุมัติ") === "รออนุมัติ" && (
-                      <button style={{ ...iconBtn, color: "#1A5C2A", borderColor: "#C0E5CC" }} onClick={() => approve(po.id)}><CheckCircle2 size={14} /> อนุมัติ</button>
+                      <button style={{ ...iconBtn, color: "#1B3A6B", borderColor: "#C5D5F0" }} onClick={() => approve(po.id)}><CheckCircle2 size={14} /> อนุมัติ</button>
                     )}
                     {(po.status || "รออนุมัติ") === "อนุมัติแล้ว" && (
                       <button style={iconBtn} onClick={() => revertToPending(po.id)}><Clock size={14} /> ยกเลิกอนุมัติ</button>
@@ -4873,7 +4978,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
             </Field>
             <Field label="ประเภทราคา">
               <div style={{ display: "flex", gap: 8, height: 38, alignItems: "center" }}>
-                {[{ value: "normal", label: "ราคาหน้าร้าน", color: "#1A5C2A", bg: "#fffbeb" }, { value: "vip", label: "ราคา VIP", color: "#534ab7", bg: "#f0effe" }].map((opt) => (
+                {[{ value: "normal", label: "ราคาหน้าร้าน", color: "#1B3A6B", bg: "#fffbeb" }, { value: "vip", label: "ราคา VIP", color: "#534ab7", bg: "#f0effe" }].map((opt) => (
                   <button key={opt.value} type="button"
                     style={{ padding: "6px 16px", borderRadius: 6, border: `2px solid ${form.priceType === opt.value ? opt.color : "#e5e7eb"}`, background: form.priceType === opt.value ? opt.bg : "#fff", color: form.priceType === opt.value ? opt.color : "#6b7280", fontWeight: form.priceType === opt.value ? 700 : 400, fontSize: 13, cursor: "pointer" }}
                     onClick={() => {
@@ -4912,8 +5017,8 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer",
                 border: (form.status || "รออนุมัติ") === "รออนุมัติ" ? "1px solid #f0997b" : "1px solid #d1d5db",
-                background: (form.status || "รออนุมัติ") === "รออนุมัติ" ? "#E8F5EC" : "#fff",
-                color: (form.status || "รออนุมัติ") === "รออนุมัติ" ? "#1A6B35" : "#374151",
+                background: (form.status || "รออนุมัติ") === "รออนุมัติ" ? "#E8EEF8" : "#fff",
+                color: (form.status || "รออนุมัติ") === "รออนุมัติ" ? "#1E4D8C" : "#374151",
                 fontWeight: (form.status || "รออนุมัติ") === "รออนุมัติ" ? 600 : 400,
               }}
             >
@@ -4924,7 +5029,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, fontSize: 14, cursor: "pointer",
                 border: form.status === "อนุมัติแล้ว" ? "1px solid #5dcaa5" : "1px solid #d1d5db",
-                background: form.status === "อนุมัติแล้ว" ? "#E8F5EC" : "#fff",
+                background: form.status === "อนุมัติแล้ว" ? "#E8EEF8" : "#fff",
                 color: form.status === "อนุมัติแล้ว" ? "#085041" : "#374151",
                 fontWeight: form.status === "อนุมัติแล้ว" ? 600 : 400,
               }}
@@ -4938,7 +5043,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
 
           <div style={{ marginTop: 8, marginBottom: 8, fontWeight: 600, fontSize: 14 }}>สินค้า</div>
           {isMobile ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {form.items.map((it, idx) => {
                 const qty = Math.round((Number(it.qty) || 0) * 100) / 100;
                 const deductPct = Number(it.deductPct) || 0;
@@ -4946,35 +5051,39 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                 const totalDeductKg = Math.round(((qty * deductPct / 100) + deductKg) * 100) / 100;
                 const net = Math.round((qty - totalDeductKg) * 100) / 100;
                 return (
-                  <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa", position: "relative" }}>
-                    <button style={{ ...btnDanger, position: "absolute", top: 8, right: 8, padding: "4px 8px" }} onClick={() => removeItem(idx)}><Trash2 size={13} /></button>
-                    <div style={{ marginBottom: 8, paddingRight: 36 }}>
-                      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>สินค้า</label>
-                      <ProductSelect products={products} value={it.productId} onChange={(pid) => updateItem(idx, "productId", pid)} minWidth={0} />
+                  <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafbfc" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ flex: 1 }}>
+                        <ProductSelect products={products} value={it.productId} onChange={(pid) => updateItem(idx, "productId", pid)} />
+                      </div>
+                      <button style={btnDanger} onClick={() => removeItem(idx)}><Trash2 size={14} /></button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>จำนวน ({prodUnit(it.productId) || "หน่วย"})</label>
-                        <NumInput style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.qty != null ? (Math.round((Number(it.qty)||0)*100)/100) : ""} onChange={(e) => updateItem(idx, "qty", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>จำนวน ({prodUnit(it.productId) || "หน่วย"})</label>
+                        <NumInput style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.qty != null ? (Math.round((Number(it.qty)||0)*100)/100) : ""} onChange={(e) => updateItem(idx, "qty", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>ราคา/หน่วย</label>
-                        <NumInput style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.price} onChange={(e) => updateItem(idx, "price", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>ราคา/หน่วย</label>
+                        <NumInput style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.price} onChange={(e) => updateItem(idx, "price", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
                       </div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>หัก%</label>
-                        <input type="number" min={0} max={100} style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.deductPct || ""} placeholder="0" onChange={(e) => updateItem(idx, "deductPct", e.target.value)} />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>หัก %</label>
+                        <input type="number" min={0} max={100} style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.deductPct || ""} placeholder="0" onChange={(e) => updateItem(idx, "deductPct", e.target.value)} />
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>หัก (กก.)</label>
-                        <input type="number" min={0} style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.deductKg != null ? (Math.round((Number(it.deductKg)||0)*100)/100) : ""} placeholder="0" onChange={(e) => updateItem(idx, "deductKg", e.target.value)} />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>หัก (กก.)</label>
+                        <input type="number" min={0} style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.deductKg != null ? (Math.round((Number(it.deductKg)||0)*100)/100) : ""} placeholder="0" onChange={(e) => updateItem(idx, "deductKg", e.target.value)} />
                       </div>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, paddingTop: 8, borderTop: "1px dashed #d1d5db" }}>
-                      <span style={{ color: "#6b7280" }}>สุทธิ: <b style={{ color: "#111827" }}>{fmt(net)}</b> &nbsp;|&nbsp; รวมหัก: {fmt(totalDeductKg)}</span>
-                      <span style={{ fontWeight: 700, color: "#1A6B35" }}>฿{fmt(net * (Number(it.price) || 0))}</span>
+                      <span style={{ color: "#6b7280" }}>รวมหัก: <b style={{ color: totalDeductKg > 0 ? "#1E4D8C" : "#9ca3af" }}>{fmt(totalDeductKg)}</b></span>
+                      <span style={{ color: "#6b7280" }}>สุทธิ: <b>{fmt(net)}</b></span>
+                    </div>
+                    <div style={{ textAlign: "right", marginTop: 6, fontWeight: 700, color: "#1E4D8C", fontSize: 15 }}>
+                      ฿{fmt(net * (Number(it.price) || 0))}
                     </div>
                   </div>
                 );
@@ -5013,10 +5122,10 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                       <td style={{ ...tdStyle, color: "#9ca3af", fontSize: 11 }}>{prodUnit(it.productId)}</td>
                       <td style={tdStyle}><input type="number" min={0} max={100} style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.deductPct || ""} placeholder="0" onChange={(e) => updateItem(idx, "deductPct", e.target.value)} /></td>
                       <td style={tdStyle}><input type="number" min={0} style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.deductKg != null ? (Math.round((Number(it.deductKg)||0)*100)/100) : ""} placeholder="0" onChange={(e) => updateItem(idx, "deductKg", e.target.value)} /></td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: totalDeductKg > 0 ? "#1A6B35" : "#9ca3af", fontWeight: 500 }}>{fmt(totalDeductKg)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: totalDeductKg > 0 ? "#1E4D8C" : "#9ca3af", fontWeight: 500 }}>{fmt(totalDeductKg)}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(net)}</td>
                       <td style={tdStyle}><NumInput style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.price} onChange={(e) => updateItem(idx, "price", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} /></td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>{fmt(net * (Number(it.price) || 0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>{fmt(net * (Number(it.price) || 0))}</td>
                       <td style={tdStyle}><button style={btnDanger} onClick={() => removeItem(idx)}><Trash2 size={14} /></button></td>
                     </tr>
                   );
@@ -5045,7 +5154,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
               <div style={{ fontSize: 14, fontWeight: 700 }}>
                 ก่อน VAT: ฿{fmt(form.items.reduce((s, it) => s + lineTotal(it), 0))}
                 {Number(form.vatRate) > 0 && (
-                  <span style={{ color: "#1A6B35", marginLeft: 10 }}>
+                  <span style={{ color: "#1E4D8C", marginLeft: 10 }}>
                     VAT {form.vatRate}%: +฿{fmt(form.items.reduce((s, it) => s + lineTotal(it), 0) * ((Number(form.vatRate) || 0) / 100))}
                     &nbsp;|&nbsp; รวม: ฿{fmt(form.items.reduce((s, it) => s + lineTotal(it), 0) * (1 + (Number(form.vatRate) || 0) / 100))}
                   </span>
@@ -5078,8 +5187,8 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
                   {[
                     { label: "น้ำหนักรวม", value: fmt(totalQty), unit: "กก.", color: "#1f2937", bg: "#f9fafb" },
-                    { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), unit: "กก.", color: "#1A6B35", bg: "#fef2f2" },
-                    { label: "น้ำหนักสุทธิ", value: fmt(totalNet), unit: "กก.", color: "#1A5C2A", bg: "#f0fdf4" },
+                    { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), unit: "กก.", color: "#1E4D8C", bg: "#fef2f2" },
+                    { label: "น้ำหนักสุทธิ", value: fmt(totalNet), unit: "กก.", color: "#1B3A6B", bg: "#f0fdf4" },
                   ].map((item) => (
                     <div key={item.label} style={{ background: item.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center", border: `1px solid ${item.color}22` }}>
                       <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{item.label}</div>
@@ -5091,7 +5200,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
                 {/* สรุปยอดเงิน */}
                 <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 16px", fontSize: 14 }}>
                   <Row label="ยอดก่อน VAT" value={`฿${fmt(subtotalBeforeVat)}`} />
-                  {vat > 0 && <Row label={`VAT ${form.vatRate}%`} value={`+฿${fmt(vat)}`} color="#1A6B35" />}
+                  {vat > 0 && <Row label={`VAT ${form.vatRate}%`} value={`+฿${fmt(vat)}`} color="#1E4D8C" />}
                   <Row label="ยอดรวมที่ต้องชำระ" value={`฿${fmt(total)}`} bold />
                   <p style={{ fontSize: 12, color: "#9ca3af", margin: "8px 0 0" }}>
                     * บันทึกใบนี้ก่อนได้เลย — ไปบันทึกการจ่ายเงินจริงที่เมนู "รับชำระ/จ่ายชำระ" ทีหลังได้
@@ -5145,7 +5254,7 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
   }, 0);
   const vat = subtotal * ((Number(po.vatRate) || 0) / 100);
   const total = subtotal + vat;
-  const primaryColor = cs.primaryColor || "#1A5C2A";
+  const primaryColor = cs.primaryColor || "#1B3A6B";
   // style แถวเตี้ยเฉพาะใบรับสินค้า (ลดระยะห่างบน-ล่าง ไม่กระทบตารางหน้าอื่น)
   const thCompact = { ...thStyle, padding: "4px 12px" };
   const tdCompact = { ...tdStyle, padding: "4px 12px" };
@@ -5160,7 +5269,7 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
               <img src={cs.logo} alt="logo" style={{ height: 60, maxWidth: 120, objectFit: "contain" }} />
             )}
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: primaryColor }}>{cs.name || "wpn@อุบล"}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: primaryColor }}>{cs.name || "Ttm@นครสวรรค์"}</div>
               {cs.nameEn && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.nameEn}</div>}
               {cs.taxId && <div style={{ fontSize: 12, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
               {cs.address && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.address}</div>}
@@ -5172,7 +5281,7 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
             <div style={{ fontSize: 12, color: "#6b7280" }}>เลขที่: {po.id}</div>
             <div style={{ fontSize: 12, color: "#6b7280" }}>วันที่: {po.date}</div>
             <div style={{ fontSize: 12, marginTop: 4 }}>
-              สถานะ: <span style={{ fontWeight: 600, color: po.status === "อนุมัติแล้ว" ? "#1A5C2A" : po.status === "ยกเลิก" ? "#2E7A42" : "#1A5C2A" }}>{po.status || "รออนุมัติ"}</span>
+              สถานะ: <span style={{ fontWeight: 600, color: po.status === "อนุมัติแล้ว" ? "#1B3A6B" : po.status === "ยกเลิก" ? "#2456A4" : "#1B3A6B" }}>{po.status || "รออนุมัติ"}</span>
             </div>
           </div>
         </div>
@@ -5187,17 +5296,27 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
               🚛 ทะเบียนรถ: <strong>{po.vehiclePlate}</strong>
             </div>
           )}
+          {(() => {
+            const b = (customer?.bankAccounts || []).find((x) => x.id === po.receivingCustomerBankId);
+            if (!b) return null;
+            return (
+              <div style={{ marginTop: 8, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                <div style={{ fontWeight: 600, fontSize: 11, marginBottom: 4, color: "#374151" }}>บัญชีธนาคารที่ใช้รับเงิน</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#1B3A6B" }}>
+                  {b.bankName} — {b.accountNo} ({b.accountName})
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: primaryColor + "22" }}>
-              <th style={{ ...thCompact, color: primaryColor, width: "35%" }}>สินค้า</th>
-              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "13%" }}>จำนวน</th>
-              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "13%" }}>รวมหัก</th>
-              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "13%" }}>สุทธิ</th>
-              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "13%" }}>ราคา/หน่วย</th>
-              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "13%" }}>จำนวนเงิน</th>
+              <th style={{ ...thCompact, color: primaryColor, width: "45%" }}>สินค้า</th>
+              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "18%" }}>จำนวนสุทธิ</th>
+              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "18%" }}>ราคา/หน่วย</th>
+              <th style={{ ...thCompact, color: primaryColor, textAlign: "right", width: "19%" }}>จำนวนเงิน</th>
             </tr>
           </thead>
           <tbody>
@@ -5205,15 +5324,12 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
               const p = prodInfo(it.productId);
               const qty = Number(it.qty) || 0;
               const net = calcNet(it);
-              const deducted = qty - net;
               const discountPct = Number(it.discountPct) || 0;
               const amount = net * (Number(it.price) || 0) * (1 - discountPct / 100);
               return (
                 <tr key={idx}>
                   <td style={{ ...tdCompact, wordBreak: "break-word" }}>{p.name}</td>
-                  <td style={{ ...tdCompact, textAlign: "right" }}>{fmt(qty)} {p.unit}</td>
-                  <td style={{ ...tdCompact, textAlign: "right", color: deducted > 0 ? "#1A6B35" : "#9ca3af" }}>{deducted > 0 ? fmt(deducted) : "0"}</td>
-                  <td style={{ ...tdCompact, textAlign: "right" }}>{fmt(net)}</td>
+                  <td style={{ ...tdCompact, textAlign: "right" }}>{fmt(net)} {p.unit}</td>
                   <td style={{ ...tdCompact, textAlign: "right" }}>{fmt(it.price)}</td>
                   <td style={{ ...tdCompact, textAlign: "right", fontWeight: 600 }}>{fmt(amount)}</td>
                 </tr>
@@ -5222,22 +5338,16 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
           </tbody>
           <tfoot>
             {(() => {
-              const totalQty = po.items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
               const totalNet = po.items.reduce((s, it) => {
                 const qty = Number(it.qty) || 0;
-                const deductPct = Number(it.deductPct) || 0;
-                const deductKg = Number(it.deductKg) || 0;
-                const net = it.net != null ? Number(it.net) : Math.round((qty - (qty * deductPct / 100) - deductKg) * 100) / 100;
+                const net = it.deductType === "pct" ? qty*(1-(Number(it.deductPct)||0)/100) : qty - (Number(it.deduct)||0);
                 return s + net;
               }, 0);
-              const totalDeducted = Math.round((totalQty - totalNet) * 100) / 100;
               const unit = po.items[0] ? (products.find(p=>p.id===po.items[0].productId)?.unit || "") : "";
               return (
                 <tr style={{ background: "#f9fafb" }}>
                   <td style={{ ...tdCompact, fontWeight: 700, color: "#374151" }}>รวมทั้งหมด</td>
-                  <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700 }}>{fmt(totalQty)}</td>
-                  <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>{fmt(totalDeducted)}</td>
-                  <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700 }}>{fmt(totalNet)}</td>
+                  <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700 }}>{fmt(totalNet)} {unit}</td>
                   <td style={{ ...tdCompact }}></td>
                   <td style={{ ...tdCompact }}></td>
                 </tr>
@@ -5245,19 +5355,19 @@ function PurchasePdfModal({ po, customer, products, storeBankAccounts, companySe
             })()}
             {po.vatRate > 0 && (
               <tr>
-                <td colSpan={5} style={{ ...tdCompact, textAlign: "right", fontSize: 11 }}>ยอดก่อน VAT</td>
+                <td colSpan={3} style={{ ...tdCompact, textAlign: "right", fontSize: 11 }}>ยอดก่อน VAT</td>
                 <td style={{ ...tdCompact, textAlign: "right", fontSize: 11 }}>{fmt(subtotal)} บาท</td>
               </tr>
             )}
             {po.vatRate > 0 && (
               <tr>
-                <td colSpan={5} style={{ ...tdCompact, textAlign: "right", fontSize: 11, color: "#1A6B35" }}>VAT {po.vatRate}%</td>
-                <td style={{ ...tdCompact, textAlign: "right", fontSize: 11, color: "#1A6B35" }}>+{fmt(vat)} บาท</td>
+                <td colSpan={3} style={{ ...tdCompact, textAlign: "right", fontSize: 11, color: "#1E4D8C" }}>VAT {po.vatRate}%</td>
+                <td style={{ ...tdCompact, textAlign: "right", fontSize: 11, color: "#1E4D8C" }}>+{fmt(vat)} บาท</td>
               </tr>
             )}
             <tr style={{ background: "#f0fdf4" }}>
-              <td colSpan={5} style={{ ...tdCompact, textAlign: "right", fontWeight: 700, fontSize: 13 }}>จำนวนเงินสุทธิ</td>
-              <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700, fontSize: 13, color: "#1A5C2A" }}>{fmt(total)}</td>
+              <td colSpan={3} style={{ ...tdCompact, textAlign: "right", fontWeight: 700, fontSize: 13 }}>จำนวนเงินสุทธิ</td>
+              <td style={{ ...tdCompact, textAlign: "right", fontWeight: 700, fontSize: 13, color: "#1B3A6B" }}>{fmt(total)}</td>
             </tr>
           </tfoot>
         </table>
@@ -5360,6 +5470,8 @@ function syncWithdrawalsToSales(sales, withdrawalLots) {
 }
 
 function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, setWithdrawals, inventory, customers, companySettings }) {
+  const isMobile = useIsMobile();
+  const [selectedSales, setSelectedSales] = useState({});
   const cs = companySettings || {};
   const [modal, setModal] = useState(null); // {mode:'add'|'edit'}
   const [search, setSearch] = useState("");
@@ -5370,7 +5482,6 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
   const toggleGroup = (saleId) => setExpandedGroups((prev) => ({ ...prev, [saleId]: !prev[saleId] }));
   const [expanded, setExpanded] = useState(null);
   const [printLot, setPrintLot] = useState(null); // ใบเบิกสินค้าที่กำลังจะพิมพ์
-  const isMobile = useIsMobileView();
 
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
@@ -5546,8 +5657,6 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
     prodName(g.productId).toLowerCase().includes(aggregateSearch.toLowerCase())
   );
 
-  const [selectedInvoices, setSelectedInvoices] = React.useState({});
-
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" }}>
       <div style={{ flexShrink: 0 }}>
@@ -5618,7 +5727,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(it.value)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>
                             ฿{fmt(it.avgCost)}
-                            {it.shortfall > 0 && <span style={{ color: "#2E7A42", fontSize: 11, marginLeft: 4 }}>(สต๊อกขาด {fmt(it.shortfall)})</span>}
+                            {it.shortfall > 0 && <span style={{ color: "#2456A4", fontSize: 11, marginLeft: 4 }}>(สต๊อกขาด {fmt(it.shortfall)})</span>}
                           </td>
                           <td style={{ ...tdStyle, color: "#9ca3af" }}><ArrowRight size={14} /></td>
                           <td style={tdStyle}>{prodName(it.targetProductId)}</td>
@@ -5639,107 +5748,111 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
         <Pagination page={page} totalPages={totalPages} setPage={setPage} total={total} start={start} end={end} />
       </div>
 
-      {aggregates.length > 0 && (
+        {aggregates.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          {(() => {
-            const grouped = {};
-            filteredAggregates.forEach((g) => { if (!grouped[g.saleId]) grouped[g.saleId] = []; grouped[g.saleId].push(g); });
-            const sortedEntries = Object.entries(grouped).sort((a, b) => b[0].localeCompare(a[0], undefined, { numeric: true }));
-            const allIds = sortedEntries.map(([id]) => id);
-            const anySelected = allIds.some(id => selectedInvoices[id]);
-            const allSelected = allIds.length > 0 && allIds.every(id => selectedInvoices[id]);
-            return (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {anySelected && (
-                      <button style={{ ...btnPrimary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
-                        const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
-                        sortedEntries.filter(([id]) => selectedInvoices[id]).forEach(([saleId, items]) => {
-                          rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
-                          items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
-                        });
-                        exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
-                      }}><FileSpreadsheet size={13} /> Excel ({allIds.filter(id => selectedInvoices[id]).length})</button>
-                    )}
-                    {!anySelected && (
-                      <button style={{ ...btnSecondary, padding: "5px 12px", fontSize: 12 }} onClick={() => {
-                        const rows = [["เลข Invoice", "สินค้าในใบขาย", "จำนวนรวม", "มูลค่ารวม", "ราคาเฉลี่ยใหม่"]];
-                        sortedEntries.forEach(([saleId, items]) => {
-                          rows.push([saleId, `${items.length} รายการ`, items.reduce((s,g)=>s+g.qty,0), items.reduce((s,g)=>s+g.value,0), ""]);
-                          items.forEach(g => rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
-                        });
-                        exportExcel(rows, "สรุปต้นทุนใบขาย.xlsx", "เบิกสินค้า");
-                      }}><FileSpreadsheet size={13} /> Excel (ทั้งหมด)</button>
-                    )}
-                  </div>
-                </div>
-                <SearchBar value={aggregateSearch} onChange={setAggregateSearch} placeholder="ค้นหาเลข Invoice หรือสินค้า..." />
-                <Card>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...thStyle, width: 40 }}>
-                          <input type="checkbox" checked={allSelected} onChange={e => {
-                            const next = {};
-                            allIds.forEach(id => { next[id] = e.target.checked; });
-                            setSelectedInvoices(next);
-                          }} style={{ width: 15, height: 15, accentColor: "#534ab7" }} />
-                        </th>
-                        <th style={thStyle}>เลข Invoice</th>
-                        <th style={thStyle}>สินค้าในใบขาย</th>
-                        <th style={{ ...thStyle, textAlign: "right" }}>จำนวนรวม</th>
-                        <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
-                        <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ยใหม่</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedEntries.length === 0 ? (
-                        <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบรายการที่ค้นหา</td></tr>
-                      ) : sortedEntries.map(([saleId, items]) => {
-                        const totalValue = items.reduce((s, g) => s + g.value, 0);
-                        const totalQty = items.reduce((s, g) => s + g.qty, 0);
-                        const isExp = !!expandedGroups[saleId];
-                        const isChecked = !!selectedInvoices[saleId];
-                        return (
-                          <React.Fragment key={saleId}>
-                            <tr style={{ background: isChecked ? "#eeedfe" : "#f3f4f6", cursor: "pointer" }}
-                              onMouseEnter={(e) => { if (!isChecked) e.currentTarget.style.background = "#e5e7eb"; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = isChecked ? "#eeedfe" : "#f3f4f6"; }}>
-                              <td style={{ ...tdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
-                                <input type="checkbox" checked={isChecked} onChange={e => setSelectedInvoices(prev => ({ ...prev, [saleId]: e.target.checked }))}
-                                  style={{ width: 15, height: 15, accentColor: "#534ab7" }} />
-                              </td>
-                              <td style={{ ...tdStyle, fontWeight: 700, color: "#534ab7", fontFamily: "'JetBrains Mono', monospace" }} onClick={() => toggleGroup(saleId)}>
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  {isExp ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{saleId}
-                                </span>
-                              </td>
-                              <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }} onClick={() => toggleGroup(saleId)}>{items.length} รายการ</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }} onClick={() => toggleGroup(saleId)}>{fmt(totalQty)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#534ab7" }} onClick={() => toggleGroup(saleId)}>฿{fmt(totalValue)}</td>
-                              <td style={{ ...tdStyle, textAlign: "right", color: "#9ca3af" }} onClick={() => toggleGroup(saleId)}>—</td>
-                            </tr>
-                            {isExp && items.map((g) => (
-                              <tr key={`${g.saleId}__${g.productId}`} style={{ background: isChecked ? "#f5f3ff" : "#fafafa" }}>
-                                <td style={tdStyle}></td>
-                                <td style={{ ...tdStyle, color: "#9ca3af", paddingLeft: 32 }}>↳</td>
-                                <td style={tdStyle}>{prodName(g.productId)}</td>
-                                <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)} {prodUnit(g.productId)}</td>
-                                <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(g.value)}</td>
-                                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#534ab7" }}>฿{fmt(g.avgCost)}</td>
-                              </tr>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </Card>
-              </>
-            );
-          })()}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0 }}>สรุปยอดต้นทุนรวมที่ไปลงในใบขาย</h3>
+            {Object.values(selectedSales || {}).some(Boolean) && (
+              <button style={{ ...btnSecondary, display: "flex", alignItems: "center", gap: 6 }}
+                onClick={() => {
+                  const chosen = Object.entries(selectedSales).filter(([,v])=>v).map(([k])=>k);
+                  const rows = [["เลข Invoice","สินค้าในใบขาย","จำนวนรวม","มูลค่ารวม","ราคาเฉลี่ยใหม่"]];
+                  chosen.forEach(sid => {
+                    const items = aggregates.filter(g=>g.saleId===sid);
+                    const tV = items.reduce((s,g)=>s+g.value,0);
+                    const tQ = items.reduce((s,g)=>s+g.qty,0);
+                    rows.push([sid, `${items.length} รายการ`, tQ, tV, ""]);
+                    items.forEach(g=>rows.push(["", prodName(g.productId), g.qty, g.value, g.avgCost]));
+                  });
+                  exportExcel(rows, `ต้นทุนใบขาย.xlsx`, "ต้นทุน");
+                }}>
+                <Download size={14} /> Export Excel ({Object.values(selectedSales).filter(Boolean).length} ใบ)
+              </button>
+            )}
+          </div>
+          <SearchBar value={aggregateSearch} onChange={setAggregateSearch} placeholder="ค้นหาเลข Invoice หรือสินค้า..." />
+          <Card>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ ...thStyle, width: 36 }}>
+                    <input type="checkbox"
+                      style={{ width: 15, height: 15, cursor: "pointer" }}
+                      checked={filteredAggregates.length > 0 && [...new Set(filteredAggregates.map(g=>g.saleId))].every(id=>selectedSales?.[id])}
+                      onChange={(e) => {
+                        const ids = [...new Set(filteredAggregates.map(g=>g.saleId))];
+                        const next = {};
+                        ids.forEach(id => next[id] = e.target.checked);
+                        setSelectedSales(next);
+                      }}
+                    />
+                  </th>
+                  <th style={thStyle}>เลข Invoice</th>
+                  <th style={thStyle}>สินค้าในใบขาย</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>จำนวนรวม</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>มูลค่ารวม</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>ราคาเฉลี่ยใหม่</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const grouped = {};
+                  filteredAggregates.forEach((g) => {
+                    if (!grouped[g.saleId]) grouped[g.saleId] = [];
+                    grouped[g.saleId].push(g);
+                  });
+                  if (Object.keys(grouped).length === 0) return (
+                    <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบรายการที่ค้นหา</td></tr>
+                  );
+                  // เรียงล่าสุดก่อน
+                  const sortedEntries = Object.entries(grouped).sort(([a],[b]) => b.localeCompare(a, undefined, { numeric: true }));
+                  return sortedEntries.map(([saleId, items]) => {
+                    const totalValue = items.reduce((s, g) => s + g.value, 0);
+                    const totalQty = items.reduce((s, g) => s + g.qty, 0);
+                    const isExpanded = !!expandedGroups[saleId];
+                    const isChecked = !!(selectedSales?.[saleId]);
+                    return (
+                      <React.Fragment key={saleId}>
+                        <tr
+                          onClick={() => toggleGroup(saleId)}
+                          style={{ background: isChecked ? "#ede9fe" : "#f3f4f6", cursor: "pointer" }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "#e5e7eb"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = isChecked ? "#ede9fe" : "#f3f4f6"}
+                        >
+                          <td style={{ ...tdStyle, textAlign: "center" }} onClick={e=>e.stopPropagation()}>
+                            <input type="checkbox" checked={isChecked}
+                              style={{ width: 15, height: 15, cursor: "pointer" }}
+                              onChange={e => setSelectedSales(prev=>({...prev,[saleId]:e.target.checked}))}
+                            />
+                          </td>
+                          <td style={{ ...tdStyle, fontWeight: 700, color: "#534ab7", fontFamily: "'JetBrains Mono', monospace" }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              {saleId}
+                            </span>
+                          </td>
+                          <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>{items.length} รายการ</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{fmt(totalQty)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#534ab7" }}>฿{fmt(totalValue)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: "#9ca3af" }}>—</td>
+                        </tr>
+                        {isExpanded && items.map((g) => (
+                          <tr key={`${g.saleId}__${g.productId}`} style={{ background: "#fafafa" }}>
+                            <td style={tdStyle}></td>
+                            <td style={{ ...tdStyle, color: "#9ca3af", paddingLeft: 32 }}>↳</td>
+                            <td style={tdStyle}>{prodName(g.productId)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(g.qty)} {prodUnit(g.productId)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(g.value)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#534ab7" }}>฿{fmt(g.avgCost)}</td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </Card>
         </div>
       )}
 
@@ -5775,33 +5888,42 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
 
           <div style={{ marginTop: 8, marginBottom: 8, fontWeight: 600, fontSize: 14 }}>รายการเบิกสินค้า</div>
           {isMobile ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {form.items.map((it, idx) => {
                 const p = previews[idx] || { value: 0, shortfall: 0 };
                 const qty = Number(it.qty) || 0;
                 const avgCost = qty > 0 ? p.value / qty : 0;
                 const remain = stockRemaining[idx] ?? 0;
                 return (
-                  <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa", position: "relative" }}>
-                    <button style={{ ...btnDanger, position: "absolute", top: 8, right: 8, padding: "4px 8px" }} onClick={() => removeLineItem(idx)}><Trash2 size={13} /></button>
-                    <div style={{ marginBottom: 8, paddingRight: 36 }}>
-                      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>สินค้าที่เบิก (ต้นทาง)</label>
-                      <ProductSelect products={products} value={it.sourceProductId} onChange={(pid) => updateLineItem(idx, "sourceProductId", pid)} minWidth={0} />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "center", margin: "4px 0 8px", color: "#9ca3af" }}><ArrowRight size={16} /></div>
+                  <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafbfc" }}>
                     <div style={{ marginBottom: 8 }}>
-                      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>นำไปขายเป็นสินค้า (เป้าหมาย)</label>
-                      <ProductSelect products={products} value={it.targetProductId} onChange={(pid) => updateLineItem(idx, "targetProductId", pid)} minWidth={0} />
+                      <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>สินค้าที่เบิก (ต้นทาง)</label>
+                      <ProductSelect products={products} value={it.sourceProductId} onChange={(pid) => updateLineItem(idx, "sourceProductId", pid)} />
                     </div>
-                    <div style={{ marginBottom: 8 }}>
-                      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>จำนวนที่เบิก ({prodUnit(it.sourceProductId) || "หน่วย"})</label>
-                      <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.qty} onChange={(e) => updateLineItem(idx, "qty", e.target.value)} />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>จำนวนที่เบิก</label>
+                        <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.qty} onChange={(e) => updateLineItem(idx, "qty", e.target.value)} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>คงเหลือสต๊อก</label>
+                        <div style={{ ...inputStyle, textAlign: "right", color: remain < 0 ? "#2456A4" : "#6b7280" }}>{fmt(remain)} {prodUnit(it.sourceProductId)}</div>
+                      </div>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b7280", paddingTop: 8, borderTop: "1px dashed #d1d5db", flexWrap: "wrap", gap: 4 }}>
-                      <span>คงเหลือสต๊อก: <b style={{ color: remain < 0 ? "#2E7A42" : "#374151" }}>{fmt(remain)} {prodUnit(it.sourceProductId)}</b></span>
-                      <span>ราคาเฉลี่ย/หน่วย: ฿{fmt(avgCost)}{p.shortfall > 0 && <span style={{ color: "#2E7A42" }}> (ขาด {fmt(p.shortfall)})</span>}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b7280", paddingTop: 8, borderTop: "1px dashed #d1d5db", marginBottom: 8 }}>
+                      <span>มูลค่าที่เบิก: <b style={{ color: "#3c3489" }}>฿{fmt(p.value)}</b></span>
+                      <span>ราคาเฉลี่ย: <b>฿{fmt(avgCost)}</b>{p.shortfall > 0 && <span style={{ color: "#2456A4" }}> (ขาด {fmt(p.shortfall)})</span>}</span>
                     </div>
-                    <div style={{ textAlign: "right", marginTop: 6, fontWeight: 700, color: "#3c3489" }}>มูลค่าที่เบิก ฿{fmt(p.value)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <ArrowRight size={16} color="#9ca3af" style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>นำไปขายเป็นสินค้า (เป้าหมาย)</label>
+                        <ProductSelect products={products} value={it.targetProductId} onChange={(pid) => updateLineItem(idx, "targetProductId", pid)} />
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <button style={btnDanger} onClick={() => removeLineItem(idx)}><Trash2 size={14} /> ลบรายการ</button>
+                    </div>
                   </div>
                 );
               })}
@@ -5833,11 +5955,11 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                         <ProductSelect products={products} value={it.sourceProductId} onChange={(pid) => updateLineItem(idx, "sourceProductId", pid)} />
                       </td>
                       <td style={tdStyle}><input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.qty} onChange={(e) => updateLineItem(idx, "qty", e.target.value)} /></td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: remain < 0 ? "#2E7A42" : "#6b7280" }}>{fmt(remain)} {prodUnit(it.sourceProductId)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: remain < 0 ? "#2456A4" : "#6b7280" }}>{fmt(remain)} {prodUnit(it.sourceProductId)}</td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#3c3489" }}>฿{fmt(p.value)}</td>
                       <td style={{ ...tdStyle, textAlign: "right" }}>
                         ฿{fmt(avgCost)}
-                        {p.shortfall > 0 && <div style={{ color: "#2E7A42", fontSize: 11 }}>(ขาด {fmt(p.shortfall)})</div>}
+                        {p.shortfall > 0 && <div style={{ color: "#2456A4", fontSize: 11 }}>(ขาด {fmt(p.shortfall)})</div>}
                       </td>
                       <td style={{ ...tdStyle, color: "#9ca3af" }}><ArrowRight size={14} /></td>
                       <td style={tdStyle}>
@@ -5868,8 +5990,8 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
               const netWeight = totalQty - totalDeduct;
               return [
                 { label: "น้ำหนักรวม", value: fmt(totalQty), color: "#1f2937", bg: "#f9fafb" },
-                { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), color: "#1A6B35", bg: "#fef2f2" },
-                { label: "น้ำหนักสุทธิ", value: fmt(netWeight), color: "#3c3489", bg: "#fdf5f5" },
+                { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), color: "#1E4D8C", bg: "#fef2f2" },
+                { label: "น้ำหนักสุทธิ", value: fmt(netWeight), color: "#3c3489", bg: "#f5f3ff" },
               ].map((item) => (
                 <div key={item.label} style={{ background: item.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center", border: `1px solid ${item.color}22` }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{item.label}</div>
@@ -5896,7 +6018,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                   <img src={cs.logo} alt="logo" style={{ height: 50, maxWidth: 100, objectFit: "contain" }} />
                 )}
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#3c3489" }}>{cs.name || "wpn@อุบล"}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#3c3489" }}>{cs.name || "Ttm@นครสวรรค์"}</div>
                   {cs.taxId && <div style={{ fontSize: 12, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
                   {cs.address && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.address}</div>}
                   {cs.phone && <div style={{ fontSize: 12, color: "#6b7280" }}>โทร: {cs.phone}</div>}
@@ -5958,11 +6080,11 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
   );
 }
 function SalesTab({ products, customers, sales, setSales, inventory, withdrawals, storeBankAccounts, companySettings }) {
+  const isMobile = useIsMobile();
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const isMobile = useIsMobileView();
 
   const blankItem = () => ({ productId: "", qty: 0, deduct: 0, price: 0 });
   const blankPayment = () => ({ id: "SP" + Date.now().toString().slice(-6), date: new Date().toISOString().slice(0, 10), amount: 0, method: PAYMENT_METHODS[0], toStoreBankId: "", note: "" });
@@ -5977,7 +6099,7 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
-  const filtered = sales.filter((inv) => !inv.id.startsWith("OPENING-REC-") && !inv._isOpeningRec && !inv._openingLabel).filter((inv) => inv.id.includes(search) || custName(inv.customerId).includes(search)).filter((inv) => (!dateFrom || (inv.date || "") >= dateFrom) && (!dateTo || (inv.date || "") <= dateTo)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));
+  const filtered = sales.filter((inv) => inv.id.includes(search) || custName(inv.customerId).includes(search)).filter((inv) => (!dateFrom || (inv.date || "") >= dateFrom) && (!dateTo || (inv.date || "") <= dateTo)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));
   const { paged, page, setPage, totalPages, total, start, end } = usePagination(filtered);
     
   const openAdd = () => { const _d2 = new Date().toISOString().slice(0, 10); setForm({ ...blankForm(), id: genId("INV", sales, _d2) }); setModal({ mode: "add" }); };
@@ -6041,8 +6163,8 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
 
   const statusColor = (st) => {
     if (st === "ชำระแล้ว") return { bg: "#eaf3de", color: "#27500a" };
-    if (st === "ชำระบางส่วน") return { bg: "#E8F5EC", color: "#1A5C2A" };
-    return { bg: "#E8F5EC", color: "#791f1f" };
+    if (st === "ชำระบางส่วน") return { bg: "#E8EEF8", color: "#1B3A6B" };
+    return { bg: "#E8EEF8", color: "#791f1f" };
   };
 
   return (
@@ -6074,15 +6196,15 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
       </div>
       <div id="tab-export-sales" style={{ flex: 1, overflow: "auto" }}>
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860, tableLayout: "fixed" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: "15%" }}>เลข Invoice</th>
-              <th style={{ ...thStyle, width: "10%" }}>วันที่</th>
-              <th style={{ ...thStyle, width: "18%" }}>ลูกค้า</th>
-              <th style={{ ...thStyle, width: "10%" }}>ทะเบียนรถ</th>
-              <th style={{ ...thStyle, textAlign: "right", width: "13%" }}>ยอดสุทธิ</th>
-              <th style={{ ...thStyle, textAlign: "right", width: "15%" }}>ยอดรับชำระ</th>
+              <th style={{ ...thStyle, width: "14%" }}>เลข Invoice</th>
+              <th style={{ ...thStyle, width: "9%" }}>วันที่</th>
+              <th style={{ ...thStyle, width: "17%" }}>ลูกค้า</th>
+              <th style={{ ...thStyle, width: "9%" }}>ทะเบียนรถ</th>
+              <th style={{ ...thStyle, textAlign: "right", width: "14%" }}>ยอดสุทธิ</th>
+              <th style={{ ...thStyle, textAlign: "right", width: "18%" }}>ยอดรับชำระ</th>
               <th style={{ ...thStyle, width: "10%" }}>สถานะ</th>
               <th style={{ ...thStyle, textAlign: "right", width: "9%" }}>จัดการ</th>
             </tr>
@@ -6101,9 +6223,9 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
                     {inv.vehiclePlate ? <span style={{ background: "#f3f4f6", padding: "2px 8px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" }}>🚛 {inv.vehiclePlate}</span> : <span style={{ color: "#d1d5db" }}>—</span>}
                   </td>
                   <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(t.total)} บาท</td>
-                  <td style={{ ...tdStyle, textAlign: "right" }}>
-                    <div style={{ fontSize: 12, color: "#1A5C2A" }}>รับแล้ว ฿{fmt(t.paid)}</div>
-                    {livePayStatus !== "ชำระแล้ว" && t.remaining > 0.01 && <div style={{ fontSize: 12, color: "#1A6B35" }}>ค้าง ฿{fmt(t.remaining)}</div>}
+                  <td style={{ ...tdStyle, textAlign: "right", whiteSpace: "normal" }}>
+                    <div style={{ fontSize: 13, color: "#1B3A6B" }}>รับแล้ว ฿{fmt(t.paid)}</div>
+                    {livePayStatus !== "ชำระแล้ว" && t.remaining > 0.01 && <div style={{ fontSize: 13, color: "#1E4D8C" }}>ค้าง ฿{fmt(t.remaining)}</div>}
                   </td>
                   <td style={tdStyle}><span style={{ background: sc.bg, color: sc.color, padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 500 }}>{livePayStatus}</span></td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -6138,56 +6260,45 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
 
           <div style={{ marginTop: 8, marginBottom: 8, fontWeight: 600, fontSize: 14 }}>รายการสินค้า</div>
           {isMobile ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {form.items.map((it, idx) => {
                 const stock = inventory.summary.find((s) => s.productId === it.productId);
                 const net = lineNet(it);
                 const fromW = !!it.fromWithdrawal;
                 const insufficient = !fromW && stock && net > stock.qty;
                 return (
-                  <div key={idx} style={fromW ? { border: "1px solid #c7c2f0", borderRadius: 10, padding: 12, background: "#eeedfe", position: "relative" } : { border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: "#fafafa", position: "relative" }}>
-                    <button style={{ ...btnDanger, position: "absolute", top: 8, right: 8, padding: "4px 8px" }} onClick={() => removeItem(idx)}><Trash2 size={13} /></button>
-                    <div style={{ marginBottom: 8, paddingRight: 36 }}>
-                      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>สินค้า</label>
-                      <ProductSelect products={products} value={it.productId} onChange={(pid) => updateItem(idx, "productId", pid)} disabled={fromW} labelWithId={false} minWidth={0} />
-                      {fromW && (
-                        <div style={{ fontSize: 11, color: "#534ab7", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                          <PackageMinus size={12} /> มาจากการเบิกสินค้า (ตัดสต๊อกที่ใบเบิกแล้ว)
-                        </div>
-                      )}
+                  <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, background: fromW ? "#eeedfe" : "#fafbfc" }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ flex: 1 }}>
+                        <ProductSelect products={products} value={it.productId} onChange={(pid) => updateItem(idx, "productId", pid)} disabled={fromW} labelWithId={false} />
+                        {fromW && (
+                          <div style={{ fontSize: 11, color: "#534ab7", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                            <PackageMinus size={12} /> มาจากการเบิกสินค้า
+                          </div>
+                        )}
+                      </div>
+                      <button style={btnDanger} onClick={() => removeItem(idx)}><Trash2 size={14} /></button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>จำนวน</label>
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>จำนวน</label>
                         {fromW ? (
-                          <div style={{ ...inputStyle, textAlign: "right", color: "#534ab7", fontWeight: 500, background: "#fff" }}>{fmt(it.qty)}</div>
+                          <div style={{ ...inputStyle, textAlign: "right", color: "#534ab7", fontWeight: 500 }}>{fmt(it.qty)}</div>
                         ) : (
-                          <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.qty} onChange={(e) => updateItem(idx, "qty", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
+                          <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.qty} onChange={(e) => updateItem(idx, "qty", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
                         )}
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>จำนวนหัก</label>
-                        <input
-                          type="number"
-                          style={{ ...inputStyle, width: "100%", textAlign: "right" }}
-                          value={it.deduct}
-                          onChange={(e) => {
-                            const newDeduct = e.target.value;
-                            const newNet = (Number(it.qty) || 0) - (Number(newDeduct) || 0);
-                            const items = [...form.items];
-                            items[idx] = { ...items[idx], deduct: newDeduct, net: newNet };
-                            setForm({ ...form, items });
-                          }}
-                          onKeyDown={(e) => handleEnterNavigate(e, save)}
-                        />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>ราคา/หน่วย</label>
+                        <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }} value={it.price} onChange={(e) => updateItem(idx, "price", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
                       </div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>จำนวนสุทธิ</label>
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>จำนวนสุทธิ</label>
                         <input
                           type="number"
-                          style={{ ...inputStyle, width: "100%", textAlign: "right" }}
+                          style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }}
                           value={it.net != null ? it.net : net}
                           onChange={(e) => {
                             const newNet = e.target.value;
@@ -6200,15 +6311,29 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
                         />
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>ราคา/หน่วย</label>
-                        <input type="number" style={{ ...inputStyle, width: "100%", textAlign: "right" }} value={it.price} onChange={(e) => updateItem(idx, "price", e.target.value)} onKeyDown={(e) => handleEnterNavigate(e, save)} />
+                        <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 3, display: "block" }}>จำนวนหัก</label>
+                        <input
+                          type="number"
+                          style={{ ...inputStyle, width: "100%", textAlign: "right", fontSize: 16 }}
+                          value={it.deduct}
+                          onChange={(e) => {
+                            const newDeduct = e.target.value;
+                            const newNet = (Number(it.qty) || 0) - (Number(newDeduct) || 0);
+                            const items = [...form.items];
+                            items[idx] = { ...items[idx], deduct: newDeduct, net: newNet };
+                            setForm({ ...form, items });
+                          }}
+                          onKeyDown={(e) => handleEnterNavigate(e, save)}
+                        />
                       </div>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b7280", paddingTop: 8, borderTop: "1px dashed #d1d5db", flexWrap: "wrap", gap: 4 }}>
-                      <span>ต้นทุนเฉลี่ย: {fromW ? <b style={{ color: "#534ab7" }}>{fmt(it.withdrawalCost || 0)}</b> : "—"}</span>
-                      <span style={{ color: insufficient ? "#2E7A42" : "#6b7280" }}>คงเหลือสต๊อก: {fromW ? "—" : <>{stock ? fmt(stock.qty) : "-"} {prodUnit(it.productId)}</>}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, paddingTop: 8, borderTop: "1px dashed #d1d5db", color: "#6b7280" }}>
+                      <span>ต้นทุนเฉลี่ย: <b style={{ color: fromW ? "#534ab7" : "#9ca3af" }}>{fromW ? fmt(it.withdrawalCost || 0) : "—"}</b></span>
+                      <span>คงเหลือสต๊อก: <b style={{ color: insufficient ? "#2456A4" : "#374151" }}>{fromW ? "—" : (stock ? fmt(stock.qty) : "-") + " " + prodUnit(it.productId)}</b></span>
                     </div>
-                    <div style={{ textAlign: "right", marginTop: 6, fontWeight: 700, color: "#1A6B35" }}>รวม ฿{fmt(lineTotal(it))}</div>
+                    <div style={{ textAlign: "right", marginTop: 6, fontWeight: 700, color: "#185fa5", fontSize: 15 }}>
+                      ฿{fmt(lineTotal(it))}
+                    </div>
                   </div>
                 );
               })}
@@ -6286,7 +6411,7 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
                       <td style={{ ...tdStyle, textAlign: "right", color: fromW ? "#534ab7" : "#9ca3af", fontWeight: fromW ? 600 : 400 }}>
                         {fromW ? fmt(it.withdrawalCost || 0) : "—"}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: insufficient ? "#2E7A42" : "#6b7280" }}>
+                      <td style={{ ...tdStyle, textAlign: "right", color: insufficient ? "#2456A4" : "#6b7280" }}>
                         {fromW ? <span style={{ color: "#9ca3af" }}>—</span> : <>{stock ? fmt(stock.qty) : "-"} {prodUnit(it.productId)}</>}
                       </td>
                       <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt(lineTotal(it))}</td>
@@ -6321,8 +6446,8 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
               const totalDeduct = totalQty - totalNet;
               return [
                 { label: "น้ำหนักรวม", value: fmt(totalQty), color: "#1f2937", bg: "#f9fafb" },
-                { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), color: "#1A6B35", bg: "#fef2f2" },
-                { label: "น้ำหนักสุทธิ", value: fmt(totalNet), color: "#1A5C2A", bg: "#f0fdf4" },
+                { label: "รวมน้ำหนักหัก", value: fmt(totalDeduct), color: "#1E4D8C", bg: "#fef2f2" },
+                { label: "น้ำหนักสุทธิ", value: fmt(totalNet), color: "#1B3A6B", bg: "#f0fdf4" },
               ].map((item) => (
                 <div key={item.label} style={{ background: item.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center", border: `1px solid ${item.color}22` }}>
                   <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{item.label}</div>
@@ -6400,7 +6525,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
               <img src={cs.logo} alt="logo" style={{ height: 60, maxWidth: 120, objectFit: "contain" }} />
             )}
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: accentColor }}>{cs.name || "wpn@อุบล"}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: accentColor }}>{cs.name || "Ttm@นครสวรรค์"}</div>
               {cs.nameEn && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.nameEn}</div>}
               {cs.taxId && <div style={{ fontSize: 12, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
               {cs.address && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.address}</div>}
@@ -6482,10 +6607,6 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
           </div>
         </div>
 
-        <div style={{ marginTop: 8, fontSize: 13 }}>
-          สถานะ: <strong>{inv.paymentStatus}</strong>
-        </div>
-
         {/* ลายเซ็น */}
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 48, fontSize: 12 }}>
           <div style={{ textAlign: "center", width: "30%" }}>
@@ -6520,7 +6641,7 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
                       <td style={tdStyle}>{p.date}</td>
                       <td style={tdStyle}>{p.method}</td>
                       <td style={tdStyle}>{b ? `${b.bankName} ${b.accountNo}` : "-"}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>฿{fmt(p.amount)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>฿{fmt(p.amount)}</td>
                     </tr>
                   );
                 })}
@@ -6528,12 +6649,12 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
               <tfoot>
                 <tr style={{ borderTop: "2px solid #e5e7eb" }}>
                   <td colSpan={3} style={{ ...tdStyle, fontWeight: 700 }}>รับชำระแล้ว</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(paid)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(paid)}</td>
                 </tr>
                 {remaining > 0 && (
                   <tr>
                     <td colSpan={3} style={{ ...tdStyle, fontWeight: 700 }}>ยอดค้างชำระ</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(remaining)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(remaining)}</td>
                   </tr>
                 )}
               </tfoot>
@@ -6557,58 +6678,29 @@ function SalesInvoiceModal({ inv, customer, products, storeBankAccounts, company
 // ===================================================================
 // PAYMENTS TAB (รับชำระ/จ่ายชำระ — รวมรายการค้างชำระจากใบรับสินค้าและใบขาย)
 // ===================================================================
-function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, setDeposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers, payFlags, setPayFlags }) {
+function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setCustomers, storeBankAccounts, deposits, expenses, setExpenses, companySettings, setCompanySettings, bankTransfers, payFlags, setFlag, transferDetails, saveTransferDetail }) {
   const [showCreditSetting, setShowCreditSetting] = React.useState(false);
+  const [openingPayModal, setOpeningPayModal] = React.useState(null); // { customer, type: "receivable"|"payable" }
+  const [openingPayForm, setOpeningPayForm] = React.useState({ amount: "", bankId: "", date: new Date().toISOString().slice(0,10), note: "" });
   const [creditDate, setCreditDate] = React.useState(new Date().toISOString().slice(0, 10));
-  const isMobile = useIsMobileView();
-  const [creditManual, setCreditManualState] = React.useState(() => {
-    try { return Number(localStorage.getItem("creditManual") || "0"); } catch { return 0; }
-  });
-  const setCreditManual = (val) => {
-    const n = Number(val) || 0;
-    setCreditManualState(n);
-    try { localStorage.setItem("creditManual", String(n)); } catch {}
-    setCompanySettings(prev => ({ ...prev, creditManual: n }));
-  };
+  const [creditManual, setCreditManual] = React.useState(() => { try { return Number(localStorage.getItem("creditManual") || 0); } catch { return 0; } });
+  const [returnBankName, setReturnBankName] = React.useState(() => { try { return localStorage.getItem("returnBankName") || ""; } catch { return ""; } });
+  const [returnBankNo, setReturnBankNo] = React.useState(() => { try { return localStorage.getItem("returnBankNo") || ""; } catch { return ""; } });
+  const [returnBankOwner, setReturnBankOwner] = React.useState(() => { try { return localStorage.getItem("returnBankOwner") || ""; } catch { return ""; } });
 
-  const [returnBankName, setReturnBankNameState] = React.useState(() => { try { return localStorage.getItem("returnBankName") || ""; } catch { return ""; } });
-  const [returnBankNo, setReturnBankNoState] = React.useState(() => { try { return localStorage.getItem("returnBankNo") || ""; } catch { return ""; } });
-  const [returnBankOwner, setReturnBankOwnerState] = React.useState(() => { try { return localStorage.getItem("returnBankOwner") || ""; } catch { return ""; } });
-  const setReturnBankName = (v) => { setReturnBankNameState(v); try { localStorage.setItem("returnBankName", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankName: v })); };
-  const setReturnBankNo = (v) => { setReturnBankNoState(v); try { localStorage.setItem("returnBankNo", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankNo: v })); };
-  const setReturnBankOwner = (v) => { setReturnBankOwnerState(v); try { localStorage.setItem("returnBankOwner", v); } catch {} setCompanySettings(prev => ({ ...prev, returnBankOwner: v })); };
-
-  // sync creditManual + returnBank จาก companySettings เมื่อโหลดครั้งแรก
-  const creditSyncRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!creditSyncRef.current && companySettings && Object.keys(companySettings).length > 0) {
-      if (companySettings.creditManual != null) setCreditManualState(Number(companySettings.creditManual) || 0);
-      if (companySettings.returnBankName) setReturnBankNameState(companySettings.returnBankName);
-      if (companySettings.returnBankNo) setReturnBankNoState(companySettings.returnBankNo);
-      if (companySettings.returnBankOwner) setReturnBankOwnerState(companySettings.returnBankOwner);
-      creditSyncRef.current = true;
-    }
-  }, [companySettings]);
+  // persist ทุกครั้งที่เปลี่ยน
+  React.useEffect(() => { try { localStorage.setItem("creditManual", creditManual); } catch {} }, [creditManual]);
+  React.useEffect(() => { try { localStorage.setItem("returnBankName", returnBankName); } catch {} }, [returnBankName]);
+  React.useEffect(() => { try { localStorage.setItem("returnBankNo", returnBankNo); } catch {} }, [returnBankNo]);
+  React.useEffect(() => { try { localStorage.setItem("returnBankOwner", returnBankOwner); } catch {} }, [returnBankOwner]);
   const creditLimit = Number(companySettings?.creditLimit) || 0;
   const creditAccounts = companySettings?.creditAccounts || []; // array of storeBankAccount ids ที่นับในวงเงิน
 
-  const [showTransferSheet, setShowTransferSheet] = React.useState(false);
-  const [transferTab, setTransferTab] = React.useState("purchase"); // "purchase" | "expense"
-  const [transferDetailModal, setTransferDetailModal] = React.useState(null); // { row }
-  const [transferEntries, setTransferEntries] = React.useState([{ bankId: "", amount: "" }]);
-  // เก็บข้อมูลตั้งโอนแต่ละบิล { [id]: [{ bankId, amount }] }
-  const [transferDetails, setTransferDetails] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem("transferDetails") || "{}"); } catch { return {}; }
-  });
-  const saveTransferDetail = (id, entries) => {
-    const next = { ...transferDetails, [id]: entries.filter(e => e.bankId || e.amount) };
-    setTransferDetails(next);
-    try { localStorage.setItem("transferDetails", JSON.stringify(next)); } catch {}
-  };
-  const setFlag = (id, flag, val) => {
-    setPayFlags({ ...payFlags, [`${id}_${flag}`]: val });
-  };
   const getFlag = (id, flag) => !!payFlags[`${id}_${flag}`];
+  const [showTransferSheet, setShowTransferSheet] = React.useState(false);
+  const [transferTab, setTransferTab] = React.useState("purchase");
+  const [transferDetailModal, setTransferDetailModal] = React.useState(null);
+  const [transferEntries, setTransferEntries] = React.useState([{ bankId: "", amount: "" }]);
   const [activeView, setActiveView] = useState("unpaid-purchase");
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -6619,7 +6711,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 
   // ---------- รายการใบรับสินค้าทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allPurchaseRows = useMemo(() => {
-    const rows = purchases
+    return purchases
       .filter((po) => (po.status || "") !== "ยกเลิก")
       .map((po) => {
         const subtotal = po.items.reduce((s, it) => {
@@ -6636,23 +6728,11 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         const payStatus = po.writeOff ? "paid" : (remaining > 0.01 ? (paid > 0.01 ? "partial" : "unpaid") : "paid");
         return { kind: "purchase", id: po.id, date: po.date, customerId: po.customerId, total, paid, remaining, payStatus, doc: po };
       });
-    // เพิ่ม virtual row สำหรับเจ้าหนี้ยกมา (ค้างจ่ายให้ลูกค้า ก่อนเริ่มใช้ระบบ)
-    customers.forEach(c => {
-      const amt = Number(c.payableOpening) || 0;
-      if (amt <= 0) return;
-      const vid = `OPENING-PAY-${c.id}`;
-      const paid = Number(c.payableOpeningPaid) || 0;
-      const remaining = amt - paid;
-      const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
-      rows.push({ kind: "purchase", id: vid, date: c.payableOpeningDate || "2000-01-01", customerId: c.id, total: amt, paid, remaining: Math.max(0, remaining), payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments: c.payableOpeningPayments || [], vatRate: 0, status: "อนุมัติแล้ว", _openingLabel: `เจ้าหนี้ยกมา · ${c.name}` } });
-    });
-    return rows;
-  }, [purchases, customers]);
+  }, [purchases]);
 
   // ---------- รายการใบขายทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allSaleRows = useMemo(() => {
-    const rows = sales
-      .filter((inv) => !inv._isOpeningRec && !inv._openingLabel && !inv.id.startsWith("OPENING-REC-"))
+    return sales
       .map((inv) => {
         const subtotal = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
         const ad = subtotal - (inv.discount || 0);
@@ -6663,26 +6743,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         const payStatus = inv.writeOff ? "paid" : (remaining > 0.01 ? (paid > 0.01 ? "partial" : "unpaid") : "paid");
         return { kind: "sale", id: inv.id, date: inv.date, customerId: inv.customerId, total, paid, remaining, payStatus, doc: inv };
       });
-    // เพิ่ม virtual row สำหรับลูกหนี้ยกมา (ค้างรับจากลูกค้า ก่อนเริ่มใช้ระบบ)
-    customers.forEach(c => {
-      const amt = Number(c.receivableOpening) || 0;
-      if (amt <= 0) return;
-      // นับยอดชำระจาก OPENING-SALE record (วิธีใหม่) หรือ customer field (วิธีเก่า)
-      const openingSaleId = `OPENING-REC-${c.id}`;
-      const openingSale = sales.find(s => s.id === openingSaleId);
-      const paidFromSale = (openingSale?.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      // ใช้ยอดจาก sale record ถ้ามี ไม่งั้นใช้จาก customer
-      const paid = openingSale ? paidFromSale : (Number(c.receivableOpeningPaid) || 0);
-      const payments = openingSale?.payments || c.receivableOpeningPayments || [];
-      const total = amt;
-      const remaining = Math.max(0, total - paid);
-      const payStatus = remaining <= 0.01 ? "paid" : paid > 0.01 ? "partial" : "unpaid";
-      const latestDate = payments.length > 0 ? payments.reduce((m, p) => p.date > m ? p.date : m, payments[0].date) : (c.receivableOpeningDate || new Date().toISOString().slice(0, 10));
-      const vid = `OPENING-REC-${c.id}`;
-      rows.push({ kind: "sale", id: vid, date: latestDate, customerId: c.id, total, paid, remaining, payStatus, isOpening: true, doc: { id: vid, customerId: c.id, items: [], payments, vatRate: 0, _openingLabel: `ลูกหนี้ยกมา · ${c.name}` } });
-    });
-    return rows;
-  }, [sales, customers]);
+  }, [sales]);
 
   // ---------- รายการค่าใช้จ่ายทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allExpenseRows = useMemo(() => {
@@ -6708,87 +6769,60 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   const creditBalance = useMemo(() => {
     if (!creditLimit) return null;
     const getWithdrawn = (r) => !!payFlags[`${r.id}_withdrawn`];
-    const totalBuy = allPurchaseRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
-    const totalExp = allExpenseRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
-    const totalSale = allSaleRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
+    const totalBuy = allPurchaseRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
+    const totalExp = allExpenseRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
+    const totalSale = allSaleRows.filter(r => getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
     const netOut = totalBuy + totalExp - totalSale;
     const balance = creditLimit - netOut;
-    const pendingBuy = allPurchaseRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
-    const pendingExp = allExpenseRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
-    const pendingSale = allSaleRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.total, 0);
+    const pendingBuy = allPurchaseRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
+    const pendingExp = allExpenseRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
+    const pendingSale = allSaleRows.filter(r => r.payStatus === "paid" && !getWithdrawn(r)).reduce((s, r) => s + r.paid, 0);
     const pendingNet = pendingBuy + pendingExp - pendingSale;
     return { limit: creditLimit, netOut, balance, pendingNet, totalBuy, totalExp, totalSale };
   }, [creditLimit, payFlags, allPurchaseRows, allExpenseRows, allSaleRows]);
 
-  // คำนวณยอดรายวัน — เฉพาะรายการที่ชำระครบแล้ว และมี payment ผ่านบัญชีที่เลือก
+  // คำนวณยอดรายวัน
+  // ฝั่งซ้าย: ยอดจ่าย/รับจริงออกจากธนาคาร เฉพาะวัน creditDate (ไม่ขึ้นกับติ๊กเบิก)
+  // ยอดค้างเบิก: ทุกบิลที่จ่ายแล้ว ยังไม่ติ๊ก (ทุกวัน) − ยอดใช้วันนี้ (เพราะรวมอยู่แล้ว)
   const creditDaySummary = useMemo(() => {
     const accs = new Set(creditAccounts);
     const hasAccPayment = (doc, field) =>
       accs.size === 0 || (doc.payments||[]).some(p => accs.has(p[field]));
 
-    // คำนวณยอดที่ชำระจริงผ่านบัญชีที่เลือก เฉพาะ payment ตรงวันที่ และปัดเป็นเต็มบาท (ยอดที่โอนจริง)
-    const sumActualPayments = (rows, field, dateFilter, paymentDateFilter) =>
-      rows.filter(dateFilter).reduce((s, r) => {
-        const pmts = (r.doc.payments || []).filter(p => {
-          const accOk = accs.size === 0 ? true : accs.has(p[field]);
-          const dateOk = paymentDateFilter ? paymentDateFilter(p) : true;
-          return accOk && dateOk;
-        });
-        const rowSum = pmts.reduce((ps, p) => ps + (Number(p.amount) || 0), 0);
-        return s + Math.floor(rowSum); // ปัดเป็นเต็มบาทต่อบิล
-      }, 0);
+    // ยอดจ่าย/รับจริงออกจากธนาคาร เฉพาะวัน creditDate (ทุกบิล ไม่ filter withdrawn)
+    const sumDayActual = (rows, field) =>
+      rows
+        .filter(r => hasAccPayment(r.doc, field))
+        .reduce((s, r) => {
+          const dayAmt = (r.doc.payments||[])
+            .filter(p => (p.date || r.date) === creditDate && (accs.size === 0 || accs.has(p[field])))
+            .reduce((ps, p) => ps + (Number(p.amount)||0), 0);
+          return s + dayAmt;
+        }, 0);
 
-    // ฝั่งซ้าย: ยอดที่เกิดขึ้นจริงวันนี้ — ไม่สนใจว่าเบิกแล้วหรือยัง
-    const dayCost = sumActualPayments(
-      allPurchaseRows,
-      "fromStoreBankId",
-      r => true,
-      p => p.date === creditDate
-    );
-    const dayExp  = sumActualPayments(
-      allExpenseRows,
-      "fromStoreBankId",
-      r => true,
-      p => p.date === creditDate
-    );
-    const dayRev  = sumActualPayments(
-      allSaleRows.filter(r => !r.isOpening),
-      "toStoreBankId",
-      r => true,
-      p => p.date === creditDate
-    );
+    const dayCost = sumDayActual(allPurchaseRows, "fromStoreBankId");
+    const dayExp  = sumDayActual(allExpenseRows,  "fromStoreBankId");
+    const dayRev  = sumDayActual(allSaleRows,     "toStoreBankId");
     const dayNet  = dayCost + dayExp - dayRev;
 
-    // ยอดค้างเบิก = ทุก payment ที่ยังไม่ติ๊กเบิก (ทุกวัน) - ยอดใช้วันนี้ (เพราะวันนี้นับแยกอยู่แล้ว)
-    const pendingPurchaseAll = sumActualPayments(
-      allPurchaseRows.filter(r => !r.isOpening),
-      "fromStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
-      null
-    );
-    const pendingExpAll = sumActualPayments(
-      allExpenseRows,
-      "fromStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
-      null
-    );
-    const pendingRevAll = sumActualPayments(
-      allSaleRows.filter(r => !r.isOpening),
-      "toStoreBankId",
-      r => !payFlags[`${r.id}_withdrawn`],
-      null
-    );
-    const pendingBefore = (pendingPurchaseAll + pendingExpAll - pendingRevAll) - dayNet;
+    // ยอดค้างเบิก = บิลที่จ่ายจริงแล้วทุกวัน ยังไม่ติ๊กเบิก รวมทุกวัน (ไม่ตัดด้วย creditDate)
+    // = (ออก-เข้า) ของทุกบิลที่ payStatus=paid และ !withdrawn และผ่านบัญชีที่เลือก
+    // แล้ว ลบ dayNet ออก (เพราะยอดวันนี้รวมอยู่ใน dayCost/dayExp/dayRev แล้ว)
+    const totalNotWithdrawnBuy = allPurchaseRows
+      .filter(r => r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "fromStoreBankId"))
+      .reduce((s, r) => s + r.paid, 0);
+    const totalNotWithdrawnExp = allExpenseRows
+      .filter(r => r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "fromStoreBankId"))
+      .reduce((s, r) => s + r.paid, 0);
+    const totalNotWithdrawnRev = allSaleRows
+      .filter(r => r.payStatus === "paid" && !payFlags[`${r.id}_withdrawn`] && hasAccPayment(r.doc, "toStoreBankId"))
+      .reduce((s, r) => s + r.paid, 0);
+
+    const pendingBefore = (totalNotWithdrawnBuy + totalNotWithdrawnExp - totalNotWithdrawnRev) - dayNet;
 
     const manual = Number(creditManual) || 0;
-    const rawTotal = dayNet + pendingBefore + manual;
-    const total = rawTotal; // ไม่ปัดเศษ ใช้ยอดจริง
-    const dayCostFloor = Math.floor(dayCost);
-    const dayExpFloor = Math.floor(dayExp);
-    const dayRevFloor = Math.floor(dayRev);
-    const dayNetFloor = Math.floor(dayNet);
-    const pendingBeforeFloor = Math.floor(pendingBefore);
-    return { dayCost: dayCostFloor, dayExp: dayExpFloor, dayRev: dayRevFloor, dayNet: dayNetFloor, dayNetFloor, pendingBefore: pendingBeforeFloor, pendingBeforeFloor, manual, total, rawTotal };
+    const total = dayNet + pendingBefore + manual;
+    return { dayCost, dayExp, dayRev, dayNet, pendingBefore, manual, total };
   }, [creditDate, allPurchaseRows, allExpenseRows, allSaleRows, payFlags, creditManual, creditAccounts]);
 
   const unpaidPurchases = allPurchaseRows.filter((r) => r.payStatus !== "paid");
@@ -6809,9 +6843,6 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       .filter((r) => r.id.includes(search) || rowSearchLabel(r).includes(search))
       .filter((r) => (!dateFrom || (r.date || "") >= dateFrom) && (!dateTo || (r.date || "") <= dateTo))
       .sort((a, b) => {
-        // opening rows ให้อยู่ด้านล่างสุดเสมอ
-        if (a.isOpening && !b.isOpening) return 1;
-        if (!a.isOpening && b.isOpening) return -1;
         if (a.date !== b.date) return a.date < b.date ? 1 : -1;
         return (b.id || "").localeCompare(a.id || "", undefined, { numeric: true });
       });
@@ -6819,8 +6850,13 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 
   const { paged: pagedCombined, page: combinedPage, setPage: setCombinedPage, totalPages: combinedTotalPages, total: combinedTotal, start: combinedStart, end: combinedEnd } = usePagination(combined);
 
-  const totalPayable = unpaidPurchases.reduce((s, r) => s + r.remaining, 0);
-  const totalReceivable = unpaidSales.reduce((s, r) => s + r.remaining, 0);
+  const openingRecPaid = customers.reduce((s,c)=>(c.openingPayments||[]).filter(p=>p.type==="receivable").reduce((s2,p)=>s2+(Number(p.amount)||0),s),0);
+  const openingPayPaid = customers.reduce((s,c)=>(c.openingPayments||[]).filter(p=>p.type==="payable").reduce((s2,p)=>s2+(Number(p.amount)||0),s),0);
+  const openingRecRemain = Math.max(0, customers.reduce((s,c)=>s+(Number(c.openingReceivable)||0),0) - openingRecPaid);
+  const openingPayRemain = Math.max(0, customers.reduce((s,c)=>s+(Number(c.openingPayable)||0),0) - openingPayPaid);
+
+  const totalPayable = unpaidPurchases.reduce((s, r) => s + r.remaining, 0) + openingPayRemain;
+  const totalReceivable = unpaidSales.reduce((s, r) => s + r.remaining, 0) + openingRecRemain;
   const totalPayableExpense = unpaidExpenses.reduce((s, r) => s + r.remaining, 0);
 
   // ---------- ฟอร์มบันทึกการจ่าย/รับเงิน (รองรับแบ่งจ่ายหลายงวดในครั้งเดียว) ----------
@@ -6868,62 +6904,19 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     if (cleaned.length === 0) return;
     const realId = payModal.doc?.id ?? payModal.id;
     const ts = new Date().toISOString();
-
-    // กรณี opening virtual row — บันทึกการชำระไว้ใน customer record แทน
-    if (payModal.isOpening) {
-      const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
-      if (payModal.kind === "purchase") {
-        // เจ้าหนี้ยกมา
-        const updatedCustomers = customers.map(c => c.id === payModal.customerId ? {
-          ...c,
-          payableOpeningPaid: (Number(c.payableOpeningPaid) || 0) + addedPaid,
-          payableOpeningPayments: [...(c.payableOpeningPayments || []), ...cleaned],
-        } : c);
-        setCustomers(updatedCustomers);
-        const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
-        if (updatedC) saveToSupabase('customers', [updatedC]);
-      } else {
-        // ลูกหนี้ยกมา — บันทึกลงใน sale record OPENING-REC-xxx (ใช้ id เดิมที่มีใน Supabase)
-        const custName = customers.find(c => c.id === payModal.customerId)?.name || "";
-        const openingSaleId = `OPENING-REC-${payModal.customerId}`;
-        const existingSale = sales.find(s => s.id === openingSaleId);
-        const addedPaid = cleaned.reduce((s, p) => s + p.amount, 0);
-        if (existingSale) {
-          const updatedSale = { ...existingSale, payments: [...(existingSale.payments || []), ...cleaned], updated_at: ts };
-          setSales(prev => prev.map(s => s.id === openingSaleId ? updatedSale : s));
-          saveToSupabase('sales', [updatedSale]);
-        } else {
-          const newSale = {
-            id: openingSaleId,
-            date: cleaned[0]?.date || ts.slice(0, 10),
-            customerId: payModal.customerId,
-            items: [], discount: 0, vatRate: 0,
-            payments: cleaned,
-            paymentStatus: "ชำระแล้ว",
-            note: `รับชำระลูกหนี้ยกมา — ${custName}`,
-            _isOpeningRec: true,
-            _openingLabel: `ลูกหนี้ยกมา · ${custName}`,
-            updated_at: ts,
-          };
-          setSales(prev => [...prev, newSale]);
-          saveToSupabase('sales', [newSale]);
-        }
-        // อัปเดต customer เพื่อ track ยอดที่ชำระแล้ว
-        const updatedCustomers = customers.map(c => c.id === payModal.customerId ? {
-          ...c,
-          receivableOpeningPaid: (Number(c.receivableOpeningPaid) || 0) + addedPaid,
-          receivableOpeningPayments: [...(c.receivableOpeningPayments || []), ...cleaned],
-        } : c);
-        setCustomers(updatedCustomers);
-        const updatedC = updatedCustomers.find(c => c.id === payModal.customerId);
-        if (updatedC) saveToSupabase('customers', [updatedC]);
-      }
-    } else if (payModal.kind === "purchase") {
-      setPurchases(purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po));
+    let updatedItem;
+    if (payModal.kind === "purchase") {
+      updatedItem = purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po).find(po => po.id === realId);
+      setPurchases(prev => prev.map((po) => po.id === realId ? updatedItem : po));
+      saveToSupabase("purchases", [updatedItem]);
     } else if (payModal.kind === "expense") {
-      setExpenses(expenses.map((e) => e.id === realId ? { ...e, payments: [...(e.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : e));
+      updatedItem = expenses.map((e) => e.id === realId ? { ...e, payments: [...(e.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : e).find(e => e.id === realId);
+      setExpenses(prev => prev.map((e) => e.id === realId ? updatedItem : e));
+      saveToSupabase("expenses", [updatedItem]);
     } else {
-      setSales(sales.map((inv) => inv.id === realId ? { ...inv, payments: [...(inv.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : inv));
+      updatedItem = sales.map((inv) => inv.id === realId ? { ...inv, payments: [...(inv.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : inv).find(inv => inv.id === realId);
+      setSales(prev => prev.map((inv) => inv.id === realId ? updatedItem : inv));
+      saveToSupabase("sales", [updatedItem]);
     }
     setPayModal(null);
     setPayRows(null);
@@ -6982,34 +6975,6 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const kind = historyModal.kind;
     const newPayments = (historyModal.doc.payments || []).filter((_, i) => i !== idx);
     const ts = new Date().toISOString();
-
-    // กรณี opening row — อัปเดตใน customer
-    if (historyModal.isOpening) {
-      const customerId = historyModal.customerId;
-      const removedAmount = (historyModal.doc.payments || [])[idx]?.amount || 0;
-      let updatedC;
-      if (kind === "sale") {
-        const updatedCustomers = customers.map(c => c.id === customerId ? {
-          ...c,
-          receivableOpeningPayments: newPayments,
-          receivableOpeningPaid: Math.max(0, (Number(c.receivableOpeningPaid) || 0) - Number(removedAmount)),
-        } : c);
-        setCustomers(updatedCustomers);
-        updatedC = updatedCustomers.find(c => c.id === customerId);
-      } else {
-        const updatedCustomers = customers.map(c => c.id === customerId ? {
-          ...c,
-          payableOpeningPayments: newPayments,
-          payableOpeningPaid: Math.max(0, (Number(c.payableOpeningPaid) || 0) - Number(removedAmount)),
-        } : c);
-        setCustomers(updatedCustomers);
-        updatedC = updatedCustomers.find(c => c.id === customerId);
-      }
-      if (updatedC) saveToSupabase('customers', [updatedC]);
-      setHistoryModal({ ...historyModal, doc: { ...historyModal.doc, payments: newPayments } });
-      return;
-    }
-
     let updatedItem;
     if (kind === "purchase") {
       updatedItem = { ...historyModal.doc, payments: newPayments, writeOff: false, updated_at: ts };
@@ -7024,6 +6989,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       setSales(prev => prev.map((inv) => inv.id === realId ? updatedItem : inv));
       saveToSupabase("sales", [updatedItem]);
     }
+    // อัปเดต historyModal ให้แสดงยอดใหม่
     setHistoryModal({ ...historyModal, doc: updatedItem });
   };
 
@@ -7031,12 +6997,6 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   const historyTotals = useMemo(() => {
     if (!historyModal) return null;
     const doc = historyModal.doc;
-    // opening rows — ใช้ total จาก historyModal โดยตรง
-    if (historyModal.isOpening) {
-      const total = historyModal.total || 0;
-      const paid = (doc.payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      return { total, paid, remaining: Math.max(0, total - paid) };
-    }
     let total;
     if (historyModal.kind === "expense") {
       const items = (doc.items && doc.items.length > 0) ? doc.items : [{ amount: doc.amount, vatEnabled: doc.vatEnabled, whtRate: doc.whtRate }];
@@ -7072,78 +7032,28 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "3px 8px", fontSize: 13 }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => shareCreditSummaryImage({
+              creditDate,
+              dayCost: creditDaySummary.dayCost,
+              dayExp: creditDaySummary.dayExp,
+              dayRev: creditDaySummary.dayRev,
+              dayNet: creditDaySummary.dayNet,
+              pendingBefore: creditDaySummary.pendingBefore,
+              manual: Number(creditManual) || 0,
+              total: creditDaySummary.total,
+              bankName: returnBankName,
+              bankNo: returnBankNo,
+              bankOwner: returnBankOwner,
+              filename: `สรุปยอดใช้เงิน_${creditDate}.png`,
+            })}
+              style={{ background: LINE_GREEN, border: "none", borderRadius: 6, color: "#fff", padding: "4px 10px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontWeight: 600 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d={LINE_SVG_PATH} /></svg>
+              LINE
+            </button>
             <button onClick={() => setShowCreditSetting(true)}
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-              <Settings size={13} /> ตั้งค่าวงเงิน
+              <Settings size={13} /> ตั้งค่าบัญชี
             </button>
-            <LineShareButton elementId="credit-day-summary-print" title={`สรุปยอดใช้เงิน ${creditDate}`} small
-              onClickOverride={async () => {
-                const ok = await loadHtml2Canvas();
-                if (!ok) return;
-                const ds = creditDaySummary;
-                const fmtN = (v) => {
-                  const neg = v < 0;
-                  const s = Math.abs(v).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                  return neg ? `(${s})` : s;
-                };
-                const colorN = (v) => v < 0 ? "#c0392b" : v > 0 ? "#1A6B35" : "#374151";
-
-                const c = document.createElement("div");
-                c.style.cssText = "position:fixed;left:-99999px;top:0;width:700px;background:#f5f5f5;font-family:'Noto Sans Thai',Arial,sans-serif;";
-
-                c.innerHTML = `
-                  <div style="background:#4a1e1e;color:#fff;padding:12px 20px;font-size:16px;font-weight:700;">
-                    สรุปยอดใช้เงิน — ${creditDate}
-                  </div>
-                  <div style="display:grid;grid-template-columns:1fr 1fr;background:#fff;border-bottom:2px solid #e5e7eb;">
-                    <div style="border-right:1px solid #e5e7eb;">
-                      <div style="background:#6b1f1f;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;">ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
-                      ${[
-                        { label: "ค่าสินค้า", value: ds.dayCost, bg: "#E8F5EC" },
-                        { label: "ค่าใช้จ่าย", value: ds.dayExp, bg: "#fff" },
-                        { label: "หัก รายได้จากสินค้า", value: -ds.dayRev, bg: "#E8F5EC" },
-                        { label: "รวมยอดใช้วันนี้", value: ds.dayNet, bg: "#e8d4d4", bold: true },
-                      ].map(r => `
-                        <div style="display:flex;justify-content:space-between;padding:9px 16px;background:${r.bg};border-bottom:1px solid #f0eded;">
-                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 400};">${r.label}</span>
-                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 600};color:${colorN(r.value)}">${fmtN(r.value)}</span>
-                        </div>`).join("")}
-                    </div>
-                    <div>
-                      <div style="background:#1a3a5c;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;">ยอดใช้ที่ต้องเบิกคืน</div>
-                      ${[
-                        { label: "ยอดใช้วันนี้", value: ds.dayNetFloor, bg: "#e6f1fb" },
-                        { label: "ยอดค้างเบิก", value: ds.pendingBeforeFloor, bg: "#fff" },
-                        { label: "ยอดตกหล่น", value: ds.manual, bg: "#e6f1fb" },
-                        { label: "ยอดรวมที่ต้องเบิก", value: ds.total, bg: "#d0e4f7", bold: true },
-                      ].map(r => `
-                        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 16px;background:${r.bg};border-bottom:1px solid #f0f4f8;">
-                          <span style="font-size:14px;font-weight:${r.bold ? 700 : 400};">${r.label}</span>
-                          <span style="font-size:${r.bold ? 18 : 14}px;font-weight:${r.bold ? 800 : 600};color:${colorN(r.value)}">${fmtN(r.value)}</span>
-                        </div>`).join("")}
-                    </div>
-                  </div>
-                  ${(returnBankName || returnBankNo) ? `
-                  <div style="background:#fff;padding:14px 20px;border-top:2px solid #e5e7eb;">
-                    <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px;">โอนคืนวงเงินผ่าน</div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">ธนาคาร</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankName || "—"}</div></div>
-                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">เลขที่บัญชี</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankNo || "—"}</div></div>
-                      <div><div style="font-size:11px;color:#6b7280;margin-bottom:4px;">ชื่อบัญชี</div><div style="font-size:15px;font-weight:600;color:#111;">${returnBankOwner || "—"}</div></div>
-                    </div>
-                    <div style="margin-top:10px;font-size:16px;font-weight:700;color:#185fa5;">ยอดโอนคืน: ฿${fmtN(ds.total)}</div>
-                  </div>` : ""}
-                `;
-
-                document.body.appendChild(c);
-                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-                let canvas;
-                try {
-                  canvas = await window.html2canvas(c, { scale: 2, useCORS: true, backgroundColor: "#f5f5f5", width: 700, height: c.scrollHeight, windowWidth: 700 });
-                } finally { document.body.removeChild(c); }
-                if (canvas) await shareCanvas(canvas, `สรุปยอดใช้เงิน ${creditDate}`);
-              }}
-            />
             <button onClick={() => printAsPDF("credit-day-summary-print", `สรุปยอดใช้เงิน ${creditDate}`)}
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 6, color: "#fff", padding: "4px 12px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
               <Printer size={13} /> พิมพ์
@@ -7151,74 +7061,69 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           </div>
         </div>
         <div id="credit-day-summary-print">
-          <div style={{ padding: "8px 14px", fontWeight: 700, fontSize: 15, borderBottom: "1px solid #e5e7eb" }}>
+          <div style={{ padding: "8px 14px", fontWeight: 700, fontSize: 14, borderBottom: "1px solid #e5e7eb" }}>
             สรุปยอดใช้เงิน — {creditDate}
           </div>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 0 }}>
           {/* ซ้าย: ยอดใช้เงินต่อวัน */}
-          <div style={isMobile ? { borderBottom: "2px solid #e5e7eb" } : {}}>
-            <div style={{ background: "#6b1f1f", color: "#fff", padding: "8px 16px", fontSize: 14, fontWeight: 700 }}>ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
+          <div>
+            <div style={{ background: "#6b1f1f", color: "#fff", padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>ยอดใช้เงินต่อวัน / ยอดรับต่อวัน</div>
             {[
-              { label: "ค่าสินค้า", value: creditDaySummary.dayCost, color: "#E8F5EC" },
+              { label: "ค่าสินค้า", value: creditDaySummary.dayCost, color: "#E8EEF8" },
               { label: "ค่าใช้จ่าย", value: creditDaySummary.dayExp, color: "#fff" },
-              { label: "หัก รายได้จากสินค้า", value: -creditDaySummary.dayRev, color: "#E8F5EC" },
+              { label: "หัก รายได้จากสินค้า", value: -creditDaySummary.dayRev, color: "#E8EEF8" },
               { label: "รวมยอดใช้วันนี้", value: creditDaySummary.dayNet, color: "#e8d4d4", bold: true },
             ].map((row, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "9px 16px", background: row.color, borderBottom: "1px solid #f3f0f0" }}>
-                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
-                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f3f0f0" }}>
+                <span style={{ fontSize: 14, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
+                <span style={{ fontSize: 14, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1B3A6B" : row.value > 0 ? "#1E4D8C" : "#374151" }}>
                   {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
                 </span>
               </div>
             ))}
           </div>
           {/* ขวา: ยอดที่ต้องเบิกคืน */}
-          <div style={isMobile ? {} : { borderLeft: "1px solid #e5e7eb" }}>
-            <div style={{ background: "#1a3a5c", color: "#fff", padding: "8px 16px", fontSize: 14, fontWeight: 700 }}>ยอดใช้ที่ต้องเบิกคืน</div>
+          <div style={{ borderLeft: "1px solid #e5e7eb" }}>
+            <div style={{ background: "#1a3a5c", color: "#fff", padding: "6px 14px", fontSize: 12, fontWeight: 700 }}>ยอดใช้ที่ต้องเบิกคืน</div>
             {[
-              { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNetFloor, color: "#e6f1fb" },
-              { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBeforeFloor, color: "#fff" },
+              { label: "ยอดใช้วันนี้", value: creditDaySummary.dayNet, color: "#e6f1fb" },
+              { label: "ยอดค้างเบิก", value: creditDaySummary.pendingBefore, color: "#fff" },
               { label: "ยอดตกหล่น", value: null, color: "#e6f1fb", input: true },
               { label: "ยอดรวมที่ต้องเบิก", value: creditDaySummary.total, color: "#d0e4f7", bold: true },
             ].map((row, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 16px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
-                <span style={{ fontSize: 15, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 14px", background: row.color, borderBottom: "1px solid #f0f4f8" }}>
+                <span style={{ fontSize: 14, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
                 {row.input ? (
                   <input type="number" value={creditManual} onChange={(e) => setCreditManual(e.target.value)}
-                    style={{ width: 120, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", fontSize: 15 }} />
+                    style={{ width: 100, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6, padding: "2px 8px", fontSize: 14 }} />
                 ) : (
-                  <div style={{ textAlign: "right" }}>
-                    <span style={{ fontSize: row.bold ? 18 : 15, fontWeight: row.bold ? 800 : 600, color: row.value < 0 ? "#1A5C2A" : row.value > 0 ? "#1A6B35" : "#374151" }}>
-                      {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
-                    </span>
-                    {row.rawTotal != null && row.rawTotal !== row.value && (
-                      <div style={{ fontSize: 11, color: "#9ca3af" }}>ก่อนปัด: {fmt(row.rawTotal)}</div>
-                    )}
-                  </div>
+                  <span style={{ fontSize: 14, fontWeight: row.bold ? 700 : 600, color: row.value < 0 ? "#1B3A6B" : row.value > 0 ? "#1E4D8C" : "#374151" }}>
+                    {row.value < 0 ? `(${fmt(Math.abs(row.value))})` : fmt(row.value)}
+                  </span>
                 )}
               </div>
             ))}
           </div>
         </div>
         {/* ธนาคารที่จะโอนคืนวงเงิน */}
-        <div style={{ borderTop: "1px solid #e5e7eb", padding: "12px 16px", background: "#f9fafb" }}>
-          <div style={{ fontWeight: 600, fontSize: 14, color: "#374151", marginBottom: 10 }}>โอนคืนวงเงินผ่าน</div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 8 : "0 12px" }}>
+        <div style={{ borderTop: "1px solid #e5e7eb", padding: "10px 14px", background: "#f9fafb" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: "#374151", marginBottom: 8 }}>โอนคืนวงเงินผ่าน</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px 12px" }}>
             <div>
               <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>ธนาคาร</div>
-              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankName} onChange={(e) => setReturnBankName(e.target.value)} placeholder="เช่น กสิกรไทย" />
+              <input style={{ ...inputStyle, fontSize: 16 }} value={returnBankName} onChange={(e) => setReturnBankName(e.target.value)} placeholder="เช่น กสิกรไทย" />
             </div>
             <div>
               <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>เลขที่บัญชี</div>
-              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankNo} onChange={(e) => setReturnBankNo(e.target.value)} placeholder="xxx-x-xxxxx-x" />
+              <input style={{ ...inputStyle, fontSize: 16 }} value={returnBankNo} onChange={(e) => setReturnBankNo(e.target.value)} placeholder="xxx-x-xxxxx-x" />
             </div>
             <div>
               <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 3 }}>ชื่อบัญชี</div>
-              <input style={{ ...inputStyle, fontSize: 15 }} value={returnBankOwner} onChange={(e) => setReturnBankOwner(e.target.value)} placeholder="ชื่อเจ้าของบัญชี" />
+              <input style={{ ...inputStyle, fontSize: 16 }} value={returnBankOwner} onChange={(e) => setReturnBankOwner(e.target.value)} placeholder="ชื่อเจ้าของบัญชี" />
             </div>
           </div>
           {(returnBankName || returnBankNo) && (
-            <div style={{ marginTop: 10, fontSize: 15, color: "#185fa5", fontWeight: 700 }}>
+            <div style={{ marginTop: 8, fontSize: 14, color: "#185fa5", fontWeight: 600 }}>
               ยอดโอนคืน: ฿{fmt(creditDaySummary.total)}
             </div>
           )}
@@ -7231,7 +7136,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>ยอดที่ต้องจ่าย (ใบรับสินค้าค้างจ่าย)</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: "#1A6B35" }}>฿{fmt(totalPayable)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: "#1E4D8C" }}>฿{fmt(totalPayable)}</div>
           <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>{unpaidPurchases.length} ใบ</div>
         </div>
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
@@ -7241,7 +7146,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         </div>
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>ยอดที่ต้องจ่าย (ค่าใช้จ่ายค้างจ่าย)</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: "#1A5C2A" }}>฿{fmt(totalPayableExpense)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: "#1B3A6B" }}>฿{fmt(totalPayableExpense)}</div>
           <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>{unpaidExpenses.length} รายการ</div>
         </div>
       </div>
@@ -7251,15 +7156,16 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           { key: "unpaid-purchase", label: `ค้างจ่าย (ใบรับสินค้า) (${unpaidPurchases.length})` },
           { key: "unpaid-sale", label: `ค้างรับ (ใบขาย) (${unpaidSales.length})` },
           { key: "unpaid-expense", label: `ค้างจ่าย (ค่าใช้จ่าย) (${unpaidExpenses.length})` },
+          { key: "opening-balance", label: `ยอดยกมา (ลูกหนี้/เจ้าหนี้) (${customers.filter(c=>(Number(c.openingReceivable)||0)+(Number(c.openingPayable)||0)>0).length})` },
           { key: "purchase", label: `จ่ายชำระแล้ว (${allPurchaseRows.filter(r=>r.payStatus==="paid").length})` },
           { key: "sale", label: `รับชำระแล้ว (${allSaleRows.filter(r=>r.payStatus==="paid").length})` },
           { key: "expense", label: `ค่าใช้จ่ายชำระแล้ว (${allExpenseRows.filter(r=>r.payStatus==="paid").length})` },
         ].map((opt) => (
           <button key={opt.key} onClick={() => setActiveView(opt.key)}
             style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid",
-              borderColor: activeView === opt.key ? "#2E8B45" : "#d1d5db",
-              background: activeView === opt.key ? "#E8F5EC" : "#fff",
-              color: activeView === opt.key ? "#1A5C2A" : "#6b7280" }}>
+              borderColor: activeView === opt.key ? "#2855A0" : "#d1d5db",
+              background: activeView === opt.key ? "#E8EEF8" : "#fff",
+              color: activeView === opt.key ? "#1B3A6B" : "#6b7280" }}>
             {opt.label}
           </button>
         ))}
@@ -7278,7 +7184,183 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 
       <SearchBar value={search} onChange={setSearch} placeholder="ค้นหาเลขที่ใบ หรือชื่อลูกค้า..." dateFrom={dateFrom} dateTo={dateTo} onDateFromChange={setDateFrom} onDateToChange={setDateTo} />
 
-      <Card>
+      {/* ===== แท็บยอดยกมา ===== */}
+      {activeView === "opening-balance" && (() => {
+        const rows = customers.filter(c => (Number(c.openingReceivable)||0) + (Number(c.openingPayable)||0) > 0)
+          .filter(c => !search || c.name.includes(search) || c.id.includes(search));
+        return (
+          <Card>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>ลูกค้า</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>ลูกหนี้ยกมา</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>ชำระแล้ว</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>คงค้าง (ลูกหนี้)</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>เจ้าหนี้ยกมา</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>จ่ายแล้ว</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>คงค้าง (เจ้าหนี้)</th>
+                  <th style={thStyle}>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && <tr><td colSpan={8} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มียอดยกมา</td></tr>}
+                {rows.map(c => {
+                  const recOrig = Number(c.openingReceivable) || 0;
+                  const payOrig = Number(c.openingPayable) || 0;
+                  const payments = c.openingPayments || [];
+                  const recPaid = payments.filter(p=>p.type==="receivable").reduce((s,p)=>s+(Number(p.amount)||0),0);
+                  const payPaid = payments.filter(p=>p.type==="payable").reduce((s,p)=>s+(Number(p.amount)||0),0);
+                  const recRemain = Math.max(0, recOrig - recPaid);
+                  const payRemain = Math.max(0, payOrig - payPaid);
+                  return (
+                    <tr key={c.id}>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{c.name}<div style={{ fontSize: 11, color: "#9ca3af" }}>{c.id}</div></td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{recOrig > 0 ? `฿${fmt(recOrig)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#15803d" }}>{recPaid > 0 ? `฿${fmt(recPaid)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: recRemain > 0 ? "#1B3A6B" : "#9ca3af" }}>{recOrig > 0 ? `฿${fmt(recRemain)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{payOrig > 0 ? `฿${fmt(payOrig)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#15803d" }}>{payPaid > 0 ? `฿${fmt(payPaid)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: payRemain > 0 ? "#1E4D8C" : "#9ca3af" }}>{payOrig > 0 ? `฿${fmt(payRemain)}` : "—"}</td>
+                      <td style={tdStyle}>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {recRemain > 0 && (
+                            <button style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}
+                              onClick={() => { setOpeningPayModal({ customer: c, type: "receivable" }); setOpeningPayForm({ amount: "", bankId: "", date: new Date().toISOString().slice(0,10), note: "" }); }}>
+                              รับชำระ
+                            </button>
+                          )}
+                          {payRemain > 0 && (
+                            <button style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}
+                              onClick={() => { setOpeningPayModal({ customer: c, type: "payable" }); setOpeningPayForm({ amount: "", bankId: "", date: new Date().toISOString().slice(0,10), note: "" }); }}>
+                              จ่ายชำระ
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              {rows.length > 0 && (() => {
+                const totRecOrig = rows.reduce((s,c)=>s+(Number(c.openingReceivable)||0),0);
+                const totPayOrig = rows.reduce((s,c)=>s+(Number(c.openingPayable)||0),0);
+                const totRecPaid = rows.reduce((s,c)=>s+(c.openingPayments||[]).filter(p=>p.type==="receivable").reduce((s2,p)=>s2+(Number(p.amount)||0),0),0);
+                const totPayPaid = rows.reduce((s,c)=>s+(c.openingPayments||[]).filter(p=>p.type==="payable").reduce((s2,p)=>s2+(Number(p.amount)||0),0),0);
+                return (
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid #e5e7eb", background: "#f9fafb" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(totRecOrig)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#15803d" }}>฿{fmt(totRecPaid)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(rows.reduce((s,c)=>s+Math.max(0,(Number(c.openingReceivable)||0)-(c.openingPayments||[]).filter(p=>p.type==="receivable").reduce((s2,p)=>s2+(Number(p.amount)||0),0)),0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(totPayOrig)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#15803d" }}>฿{fmt(totPayPaid)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(rows.reduce((s,c)=>s+Math.max(0,(Number(c.openingPayable)||0)-(c.openingPayments||[]).filter(p=>p.type==="payable").reduce((s2,p)=>s2+(Number(p.amount)||0),0)),0))}</td>
+                      <td style={tdStyle}></td>
+                    </tr>
+                  </tfoot>
+                );
+              })()}
+            </table>
+          </Card>
+        );
+      })()}
+
+      {/* ===== Modal บันทึกรับ/จ่ายยอดยกมา ===== */}
+      {openingPayModal && (() => {
+        const { customer: cSnapshot, type } = openingPayModal;
+        // ดึงข้อมูลล่าสุดจาก state (ป้องกัน Supabase push ข้อมูลใหม่ระหว่าง Modal เปิด)
+        const c = customers.find(cu => cu.id === cSnapshot.id) || cSnapshot;
+        const isRec = type === "receivable";
+        const orig = Number(isRec ? c.openingReceivable : c.openingPayable) || 0;
+        const paid = (c.openingPayments||[]).filter(p=>p.type===type).reduce((s,p)=>s+(Number(p.amount)||0),0);
+        const remain = Math.max(0, orig - paid);
+
+        // openingPayForm เก็บ array ของงวด
+        const payItems = Array.isArray(openingPayForm.items) ? openingPayForm.items : [{ date: openingPayForm.date, amount: openingPayForm.amount || "", bankId: openingPayForm.bankId || "", note: openingPayForm.note || "" }];
+        const setItems = (items) => setOpeningPayForm(f => ({ ...f, items }));
+        const updateItem = (i, field, val) => { const next = [...payItems]; next[i] = { ...next[i], [field]: val }; setItems(next); };
+        const addItem = () => setItems([...payItems, { date: new Date().toISOString().slice(0,10), amount: "", bankId: "", note: "" }]);
+        const removeItem = (i) => setItems(payItems.filter((_,j)=>j!==i));
+        const itemsTotal = payItems.reduce((s,p)=>s+(Number(p.amount)||0),0);
+
+        const saveOpeningPay = () => {
+          const validItems = payItems.filter(p => Number(p.amount) > 0);
+          if (validItems.length === 0) { alert("กรุณาระบุจำนวนเงิน"); return; }
+          if (itemsTotal > remain + 0.01) { alert(`ยอดรวม ฿${fmt(itemsTotal)} เกินยอดคงค้าง ฿${fmt(remain)}`); return; }
+          const newPayments = validItems.map(p => ({ id: `OP-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, amount: Number(p.amount), bankId: p.bankId, date: p.date, note: p.note }));
+          setCustomers(customers.map(cu => cu.id === c.id ? { ...cu, openingPayments: [...(cu.openingPayments||[]), ...newPayments] } : cu));
+          setOpeningPayModal(null);
+        };
+        return (
+          <Modal title={`${isRec ? "รับชำระ" : "จ่ายชำระ"}ยอดยกมา — ${c.name}`} onClose={() => setOpeningPayModal(null)} wide>
+            <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13 }}>
+              <div>ยอดยกมาทั้งหมด: <b>฿{fmt(orig)}</b></div>
+              <div>ชำระแล้ว: <b style={{ color: "#15803d" }}>฿{fmt(paid)}</b></div>
+              <div>คงค้าง: <b style={{ color: "#1B3A6B" }}>฿{fmt(remain)}</b></div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>รายการชำระ (แบ่งชำระได้หลายงวด)</div>
+              <button style={btnSecondary} onClick={addItem}><Plus size={14} /> เพิ่มงวด</button>
+            </div>
+
+            {payItems.map((p, idx) => (
+              <div key={idx} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fafbfc" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: "#6b7280" }}>งวดที่ {idx + 1}</div>
+                  {payItems.length > 1 && <button style={btnDanger} onClick={() => removeItem(idx)}><Trash2 size={14} /></button>}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 12px" }}>
+                  <Field label="วันที่"><input type="date" style={inputStyle} value={p.date} onChange={e=>updateItem(idx,"date",e.target.value)} /></Field>
+                  <Field label="จำนวนเงิน (บาท)"><input type="number" min={0} style={{ ...inputStyle, textAlign: "right" }} value={p.amount} placeholder={idx===0?`฿${fmt(remain)}`:"0"} onChange={e=>updateItem(idx,"amount",e.target.value)} /></Field>
+                  <Field label="บัญชีธนาคาร">
+                    <select style={inputStyle} value={p.bankId} onChange={e=>updateItem(idx,"bankId",e.target.value)}>
+                      <option value="">— เงินสด —</option>
+                      {storeBankAccounts.map(a=><option key={a.id} value={a.id}>{a.bankName} — {a.accountNo}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="หมายเหตุ"><input style={inputStyle} value={p.note} onChange={e=>updateItem(idx,"note",e.target.value)} /></Field>
+                </div>
+              </div>
+            ))}
+
+            <div style={{ background: "#f0f4f8", borderRadius: 8, padding: "8px 14px", marginBottom: 12, fontSize: 13 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>รวมที่จะบันทึก</span><b>฿{fmt(itemsTotal)}</b>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", color: (remain - itemsTotal) > 0.01 ? "#1B3A6B" : "#15803d" }}>
+                <span>คงค้างหลังบันทึก</span><b>฿{fmt(Math.max(0, remain - itemsTotal))}</b>
+              </div>
+            </div>
+
+            {/* ประวัติการชำระ */}
+            {(c.openingPayments||[]).filter(p=>p.type===type).length > 0 && (
+              <div style={{ marginTop: 4, marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>ประวัติการชำระก่อนหน้า</div>
+                {(c.openingPayments||[]).filter(p=>p.type===type).map((p) => (
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid #f3f4f6", color: "#374151" }}>
+                    <span>{p.date} {p.note && `· ${p.note}`}</span>
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <span style={{ color: "#15803d", fontWeight: 600 }}>฿{fmt(p.amount)}</span>
+                      <button style={{ ...btnDanger, padding: "1px 6px", fontSize: 11 }} onClick={() => setCustomers(customers.map(cu=>cu.id===c.id?{...cu,openingPayments:(cu.openingPayments||[]).filter(q=>q.id!==p.id)}:cu))}>
+                        <X size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+              <button style={btnSecondary} onClick={() => setOpeningPayModal(null)}>ปิด</button>
+              {remain > 0 && <button style={btnPrimary} onClick={saveOpeningPay}><Check size={14} /> บันทึกชำระ</button>}
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {activeView !== "opening-balance" && <Card>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -7300,28 +7382,22 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           </thead>
           <tbody>
             {pagedCombined.map((r) => (
-              <tr key={r.kind + r.id} style={r.isOpening ? { background: "#fffbeb" } : undefined}>
+              <tr key={r.kind + r.id}>
                 <td style={tdStyle}>
-                  {r.isOpening ? (
-                    r.kind === "purchase"
-                      ? <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>⚑ เจ้าหนี้ยกมา</span>
-                      : <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>⚑ ลูกหนี้ยกมา</span>
-                  ) : r.kind === "purchase" ? (
-                    <span style={{ background: "#E8F5EC", color: "#1A6B35", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ใบรับสินค้า)</span>
+                  {r.kind === "purchase" ? (
+                    <span style={{ background: "#E8EEF8", color: "#1E4D8C", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ใบรับสินค้า)</span>
                   ) : r.kind === "expense" ? (
-                    <span style={{ background: "#E8F5EC", color: "#1A5C2A", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ค่าใช้จ่าย)</span>
+                    <span style={{ background: "#E8EEF8", color: "#1B3A6B", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>จ่าย (ค่าใช้จ่าย)</span>
                   ) : (
                     <span style={{ background: "#e6f1fb", color: "#185fa5", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>รับ (ใบขาย)</span>
                   )}
                 </td>
-                <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: r.isOpening ? "#92400e" : "#534ab7", fontSize: r.isOpening ? 11 : undefined }}>
-                  {r.isOpening ? "ยอดยกมา" : r.id}
-                </td>
-                <td style={tdStyle}>{r.isOpening ? "—" : r.date}</td>
+                <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace", color: "#534ab7" }}>{r.id}</td>
+                <td style={tdStyle}>{r.date}</td>
                 <td style={tdStyle}>{r.kind === "expense" ? r.vendorLabel : custName(r.customerId)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(r.total)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(r.paid)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.payStatus === "paid" ? "#1A5C2A" : r.kind === "sale" ? "#185fa5" : "#1A6B35" }}>฿{fmt(r.payStatus === "paid" ? 0 : r.remaining)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>฿{fmt(r.paid)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.payStatus === "paid" ? "#1B3A6B" : r.kind === "sale" ? "#185fa5" : "#1E4D8C" }}>฿{fmt(r.payStatus === "paid" ? 0 : r.remaining)}</td>
 
                 {["unpaid-purchase","unpaid-sale","unpaid-expense"].includes(activeView) && (
                   <td style={{ ...tdStyle, textAlign: "center" }}>
@@ -7352,7 +7428,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
                           setFlag(r.id, "withdrawn", e.target.checked);
                         }
                       }}
-                      style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#1A5C2A" }} />
+                      style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#1B3A6B" }} />
                   </td>
                 )}
                 <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -7373,38 +7449,65 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           </tbody>
         </table>
         <Pagination page={combinedPage} totalPages={combinedTotalPages} setPage={setCombinedPage} total={combinedTotal} start={combinedStart} end={combinedEnd} />
-      </Card>
+      </Card>}
 
       {/* Modal ตั้งค่าวงเงินหมุนเวียน */}
-      {showCreditSetting && (
-        <Modal title="ตั้งค่าวงเงินหมุนเวียนร้าน" onClose={() => setShowCreditSetting(false)}>
-          <Field label="วงเงินตั้งต้น (บาท)">
-            <input type="number" style={{ ...inputStyle, textAlign: "right" }}
-              value={companySettings?.creditLimit || ""}
-              onChange={(e) => setCompanySettings(prev => ({ ...prev, creditLimit: Number(e.target.value) || 0 }))}
-              placeholder="เช่น 500000" />
-          </Field>
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>เลือกบัญชีที่นับในวงเงิน</div>
-            {storeBankAccounts.map((acc) => (
-              <label key={acc.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox"
-                  checked={(companySettings?.creditAccounts || []).includes(acc.id)}
-                  onChange={(e) => {
-                    const cur = companySettings?.creditAccounts || [];
-                    const next = e.target.checked ? [...cur, acc.id] : cur.filter(id => id !== acc.id);
-                    setCompanySettings(prev => ({ ...prev, creditAccounts: next }));
-                  }}
-                  style={{ width: 16, height: 16 }} />
-                {acc.bankName} — {acc.accountNo} ({acc.accountName || ""})
-              </label>
-            ))}
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-            <button style={btnPrimary} onClick={() => setShowCreditSetting(false)}><Check size={14} /> บันทึก</button>
-          </div>
-        </Modal>
-      )}
+      {showCreditSetting && (() => {
+        // ใช้ local draft เพื่อกันไม่ให้ realtime subscription ทับค่าระหว่างแก้
+        const [draft, setDraft] = React.useState({
+          creditLimit: companySettings?.creditLimit || 0,
+          creditAccounts: companySettings?.creditAccounts || [],
+        });
+        const handleSave = () => {
+          setCompanySettings(prev => ({ ...prev, creditLimit: draft.creditLimit, creditAccounts: draft.creditAccounts }));
+          setShowCreditSetting(false);
+        };
+        return (
+          <Modal title="ตั้งค่าวงเงินหมุนเวียนร้าน" onClose={() => setShowCreditSetting(false)}>
+            <Field label="วงเงินตั้งต้น (บาท)">
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }}
+                value={draft.creditLimit || ""}
+                onChange={(e) => setDraft(d => ({ ...d, creditLimit: Number(e.target.value) || 0 }))}
+                placeholder="เช่น 500000" />
+            </Field>
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>เลือกบัญชีที่นับในวงเงิน</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="button" style={{ ...btnSecondary, padding: "3px 10px", fontSize: 11 }}
+                    onClick={() => setDraft(d => ({ ...d, creditAccounts: storeBankAccounts.map(a => a.id) }))}>
+                    เลือกทั้งหมด
+                  </button>
+                  <button type="button" style={{ ...btnSecondary, padding: "3px 10px", fontSize: 11 }}
+                    onClick={() => setDraft(d => ({ ...d, creditAccounts: [] }))}>
+                    ล้างทั้งหมด
+                  </button>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 8 }}>
+                ถ้าไม่เลือกบัญชีใดเลย ระบบจะนับรวมทุกบัญชี
+              </div>
+              {storeBankAccounts.map((acc) => (
+                <label key={acc.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox"
+                    checked={draft.creditAccounts.includes(acc.id)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...draft.creditAccounts, acc.id]
+                        : draft.creditAccounts.filter(id => id !== acc.id);
+                      setDraft(d => ({ ...d, creditAccounts: next }));
+                    }}
+                    style={{ width: 16, height: 16 }} />
+                  {acc.bankName} — {acc.accountNo} ({acc.accountName || ""})
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+              <button style={btnPrimary} onClick={handleSave}><Check size={14} /> บันทึก</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Modal ตั้งโอน — เลือกบัญชีและยอด */}
       {transferDetailModal && (
@@ -7413,7 +7516,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
             เลขที่: <strong>{transferDetailModal.row.id}</strong> — {custName(transferDetailModal.row.customerId) || transferDetailModal.row.vendorLabel}
           </div>
           <div style={{ marginBottom: 12, fontSize: 13 }}>
-            ยอดคงค้าง: <strong style={{ color: "#1A6B35" }}>฿{fmt(transferDetailModal.row.remaining)}</strong>
+            ยอดคงค้าง: <strong style={{ color: "#1E4D8C" }}>฿{fmt(transferDetailModal.row.remaining)}</strong>
           </div>
           {transferEntries.map((entry, idx) => (
             <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: "0 10px", alignItems: "end", marginBottom: 10 }}>
@@ -7531,7 +7634,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
                             <td style={tdStyle}>{r.kind === "expense" ? r.vendorLabel : custName(r.customerId)}</td>
                             {transferTab === "expense" && <td style={{ ...tdStyle, fontSize: 12, color: "#6b7280" }}>{expenseDetail || "-"}</td>}
                             <td style={{ ...tdStyle, fontSize: 12, color: "#185fa5" }}>{bankInfo}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: r.kind === "sale" ? "#185fa5" : "#1A6B35" }}>฿{fmt(details[0]?.amount || r.remaining)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: r.kind === "sale" ? "#185fa5" : "#1E4D8C" }}>฿{fmt(details[0]?.amount || r.remaining)}</td>
                           </tr>
                         )];
                       }
@@ -7616,7 +7719,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
             <Row label={payModal.kind === "expense" ? "รายการ" : "ลูกค้า"} value={payModal.kind === "expense" ? payModal.vendorLabel : custName(payModal.customerId)} />
             <Row label="ยอดรวมใบนี้" value={`฿${fmt(payModal.total)}`} />
             <Row label="ชำระแล้ว" value={`฿${fmt(payModal.paid)}`} />
-            <Row label="คงค้าง" value={`฿${fmt(payModal.remaining)}`} bold color={payModal.kind === "sale" ? "#185fa5" : "#1A6B35"} />
+            <Row label="คงค้าง" value={`฿${fmt(payModal.remaining)}`} bold color={payModal.kind === "sale" ? "#185fa5" : "#1E4D8C"} />
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -7681,7 +7784,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               </div>
 
               {payModal.kind === "purchase" && p.fromStoreBankId === "DEPOSIT" && (
-                <p style={{ fontSize: 12, color: (Number(p.amount) || 0) > availableDeposit ? "#2E7A42" : "#6b9c8d", margin: "4px 0 0" }}>
+                <p style={{ fontSize: 12, color: (Number(p.amount) || 0) > availableDeposit ? "#2456A4" : "#6b9c8d", margin: "4px 0 0" }}>
                   ลูกค้ามีเงินมัดจำคงเหลือ ฿{fmt(availableDeposit)}
                   {(Number(p.amount) || 0) > availableDeposit && " — เกินยอดมัดจำคงเหลือ"}
                 </p>
@@ -7691,7 +7794,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 
           <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 14px", marginTop: 4, fontSize: 14 }}>
             <Row label="รวมยอดที่จะบันทึกครั้งนี้" value={`฿${fmt(rowsTotal)}`} bold />
-            <Row label="คงค้างหลังบันทึก" value={`฿${fmt(payModal.remaining - rowsTotal)}`} color={(payModal.remaining - rowsTotal) > 0.01 ? "#1A6B35" : "#1A5C2A"} />
+            <Row label="คงค้างหลังบันทึก" value={`฿${fmt(payModal.remaining - rowsTotal)}`} color={(payModal.remaining - rowsTotal) > 0.01 ? "#1E4D8C" : "#1B3A6B"} />
           </div>
 
           {Math.abs(payModal.remaining - rowsTotal) > 0.01 && (
@@ -7700,7 +7803,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
               <span>
                 <strong>ปัดเศษให้ครบ — ถือว่าใบนี้ "ชำระครบแล้ว"</strong>
                 <br />
-                <span style={{ color: "#1A5C2A" }}>ไม่นับยอดคงเหลือ ฿{fmt(payModal.remaining - rowsTotal)} เป็นยอดค้างอีกต่อไป (เหมาะกับเศษสตางค์เล็กน้อยจากการชั่งน้ำหนัก)</span>
+                <span style={{ color: "#1B3A6B" }}>ไม่นับยอดคงเหลือ ฿{fmt(payModal.remaining - rowsTotal)} เป็นยอดค้างอีกต่อไป (เหมาะกับเศษสตางค์เล็กน้อยจากการชั่งน้ำหนัก)</span>
               </span>
             </label>
           )}
@@ -7722,12 +7825,12 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
             <Row label={historyModal.kind === "expense" ? "รายการ" : "ลูกค้า"} value={historyModal.kind === "expense" ? historyModal.vendorLabel : custName(historyModal.customerId)} />
             <Row label="ยอดรวมใบนี้" value={`฿${fmt(historyTotals.total)}`} />
             <Row label="ชำระแล้ว" value={`฿${fmt(historyTotals.paid)}`} />
-            <Row label="คงค้าง" value={`฿${fmt(historyTotals.remaining)}`} bold color={historyTotals.remaining > 0.01 ? "#1A6B35" : "#1A5C2A"} />
+            <Row label="คงค้าง" value={`฿${fmt(historyTotals.remaining)}`} bold color={historyTotals.remaining > 0.01 ? "#1E4D8C" : "#1B3A6B"} />
           </div>
 
           {historyModal.doc.writeOff && historyTotals.remaining > 0.01 && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14, padding: "10px 14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: 13 }}>
-              <span style={{ color: "#1A5C2A" }}>
+              <span style={{ color: "#1B3A6B" }}>
                 <strong>ปัดเศษไว้แล้ว</strong> — ใบนี้ถือว่าชำระครบ ไม่นับยอด ฿{fmt(historyTotals.remaining)} เป็นยอดค้าง
               </span>
               <button style={btnSecondary} onClick={() => {
@@ -7877,7 +7980,7 @@ function InventoryTab({ products, inventory, storeBankAccounts }) {
       {(totalOpeningStockValue > 0 || totalOpeningBankBalance > 0) && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
           {totalOpeningStockValue > 0 && (
-            <div style={{ background: "#E8F5EC", border: "1px solid #a3d9c3", borderRadius: 8, padding: "7px 14px", fontSize: 13, color: "#0D3D1A", display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ background: "#E8EEF8", border: "1px solid #a3d9c3", borderRadius: 8, padding: "7px 14px", fontSize: 13, color: "#0F2548", display: "flex", gap: 6, alignItems: "center" }}>
               <Boxes size={14} />
               <span>สต็อกยกมา <strong>{fmt(totalOpeningStockQty)} หน่วย</strong> มูลค่า <strong>฿{fmt(totalOpeningStockValue)}</strong> — รวมในสต็อกแล้ว</span>
             </div>
@@ -7965,21 +8068,21 @@ function InventoryTab({ products, inventory, storeBankAccounts }) {
                                 <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace" }}>{ev.ref}</td>
                                 <td style={tdStyle}>
                                   {ev.type === "in" ? (
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1A5C2A" }}><ArrowDownToLine size={14} /> รับเข้า</span>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1B3A6B" }}><ArrowDownToLine size={14} /> รับเข้า</span>
                                   ) : ev.type === "withdraw" ? (
                                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#534ab7" }}><PackageMinus size={14} /> เบิกเพื่อขาย</span>
                                   ) : (
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1A6B35" }}><ArrowUpFromLine size={14} /> เบิกออก</span>
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1E4D8C" }}><ArrowUpFromLine size={14} /> เบิกออก</span>
                                   )}
                                 </td>
-                                <td style={{ ...tdStyle, textAlign: "right", color: ev.type === "in" ? "#1A5C2A" : ev.type === "withdraw" ? "#534ab7" : "#1A6B35" }}>
+                                <td style={{ ...tdStyle, textAlign: "right", color: ev.type === "in" ? "#1B3A6B" : ev.type === "withdraw" ? "#534ab7" : "#1E4D8C" }}>
                                   {ev.type === "in" ? "+" : "-"}{fmt(ev.qty)} {s.unit}
                                 </td>
                                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 500 }}>{fmt(ev.balance)} {s.unit}</td>
                                 <td style={{ ...tdStyle, textAlign: "right" }}>
                                   {ev.type === "in" ? fmt(ev.price) : fmt(ev.avgCostUsed)}
                                   {ev.type !== "in" && ev.shortfall > 0 && (
-                                    <span style={{ color: "#2E7A42", marginLeft: 6, fontSize: 11 }}>(ขาด {fmt(ev.shortfall)})</span>
+                                    <span style={{ color: "#2456A4", marginLeft: 6, fontSize: 11 }}>(ขาด {fmt(ev.shortfall)})</span>
                                   )}
                                 </td>
                               </tr>
@@ -8169,8 +8272,8 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
                   </td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(b.newGiven)}</td>
                   <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(b.totalGiven)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(b.totalUsed)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: b.remaining > 0 ? "#1A5C2A" : "#6b7280" }}>฿{fmt(b.remaining)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>฿{fmt(b.totalUsed)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: b.remaining > 0 ? "#1B3A6B" : "#6b7280" }}>฿{fmt(b.remaining)}</td>
                 </tr>
               ))}
               {balances.every((b) => b.totalGiven === 0 && b.opening === 0) && (
@@ -8203,7 +8306,7 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
               <tr key={d.id}>
                 <td style={tdStyle}>{d.date}</td>
                 <td style={tdStyle}>{custName(d.customerId)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>+฿{fmt(d.amount)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>+฿{fmt(d.amount)}</td>
                 <td style={tdStyle}>{fromLabel(d.fromStoreBankId)}</td>
                 <td style={{ ...tdStyle, color: "#6b7280" }}>{d.note || "-"}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -8220,7 +8323,7 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
             <tfoot>
               <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                 <td style={{ ...tdStyle, fontWeight: 700 }} colSpan={2}>รวมทั้งหมด ({filtered.length} รายการ)</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>+฿{fmt(filtered.reduce((s, d) => s + (Number(d.amount) || 0), 0))}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>+฿{fmt(filtered.reduce((s, d) => s + (Number(d.amount) || 0), 0))}</td>
                 <td colSpan={3} style={tdStyle}></td>
               </tr>
             </tfoot>
@@ -8248,7 +8351,7 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
                     <td style={tdStyle}>{u.date}</td>
                     <td style={tdStyle}>{custName(u.customerId)}</td>
                     <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace" }}>{u.poId}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>-฿{fmt(u.amount)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>-฿{fmt(u.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -8308,25 +8411,24 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
 // ===================================================================
 // LOANS TAB (เงินกู้ยืม / เช่าซื้อ)
 // ===================================================================
-function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
-  const [modal, setModal] = useState(null);
+function LoansTab({ loans, setLoans, expenses, customers }) {
+  const [modal, setModal] = useState(null); // {mode:'add'|'edit'|'schedule', item}
 
   const blankForm = () => ({
     id: genId("CT", loans),
     billNo: "",
     name: "",
     type: LOAN_TYPES[0],
-    lenderCustomerId: "",
-    lender: "",
+    lenderCustomerId: "", // อ้างอิงลูกค้าจากฐานข้อมูล (ถ้ามี)
+    lender: "", // ชื่อผู้ให้กู้/ไฟแนนซ์ (พิมพ์เองได้ ถ้าไม่มีในฐานข้อมูลลูกค้า)
     principal: 0,
-    interestMode: "rate",
+    interestMode: "rate", // "rate" = % ต่อปี, "amount" = จำนวนเงินดอกเบี้ยรวมตลอดสัญญา
     annualInterestRate: 0,
     totalInterestAmount: 0,
     totalInstallments: 12,
     startDate: new Date().toISOString().slice(0, 10),
-    dueDayOfMonth: new Date().getDate(),
-    paidInstallments: [],
-    receivedBankId: "", // บัญชีที่รับเงินกู้เข้า
+    dueDayOfMonth: new Date().getDate(), // ครบกำหนดชำระทุกวันที่เท่าไรของเดือน (1-31)
+    paidInstallments: [], // [{no, expenseId, paidDate}]
   });
   const [form, setForm] = useState(blankForm());
 
@@ -8417,10 +8519,10 @@ function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
                     {l.interestMode === "amount" ? `฿${fmt(l.totalInterestAmount)} (รวม)` : `${fmt(l.annualInterestRate)}% /ปี`}
                   </td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{l.totalInstallments} งวด</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: paidCount >= l.totalInstallments ? "#1A5C2A" : "#1A5C2A" }}>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: paidCount >= l.totalInstallments ? "#1B3A6B" : "#1B3A6B" }}>
                     {paidCount} / {l.totalInstallments}
                   </td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: remainingCount > 0 ? "#1A6B35" : "#1A5C2A" }}>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: remainingCount > 0 ? "#1E4D8C" : "#1B3A6B" }}>
                     {remainingCount} งวด
                   </td>
                   <td style={tdStyle}>
@@ -8488,14 +8590,17 @@ function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
               <input type="date" style={inputStyle} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
             </Field>
             <Field label="ครบกำหนดชำระทุกวันที่ (1-31) ของเดือน">
-              <input type="number" min={1} max={31} style={inputStyle} value={form.dueDayOfMonth} onChange={(e) => setForm({ ...form, dueDayOfMonth: e.target.value })} />
-              <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, marginBottom: 0 }}>* ถ้าวันที่เกินจำนวนวันในเดือนนั้น (เช่น 31 ในเดือน ก.พ.) ระบบจะใช้วันสุดท้ายของเดือนแทน</p>
-            </Field>
-            <Field label="บัญชีที่รับเงินกู้เข้า">
-              <select style={inputStyle} value={form.receivedBankId || ""} onChange={(e) => setForm({ ...form, receivedBankId: e.target.value })}>
-                <option value="">— ไม่ระบุ —</option>
-                {(storeBankAccounts || []).map(b => <option key={b.id} value={b.id}>{b.bankName} {b.accountNo}</option>)}
-              </select>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                style={inputStyle}
+                value={form.dueDayOfMonth}
+                onChange={(e) => setForm({ ...form, dueDayOfMonth: e.target.value })}
+              />
+              <p style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, marginBottom: 0 }}>
+                * ถ้าวันที่เกินจำนวนวันในเดือนนั้น (เช่น 31 ในเดือน ก.พ.) ระบบจะใช้วันสุดท้ายของเดือนแทน
+              </p>
             </Field>
           </div>
 
@@ -8528,7 +8633,7 @@ function LoansTab({ loans, setLoans, expenses, customers, storeBankAccounts }) {
                         <td style={tdStyle}>{p.no}</td>
                         <td style={tdStyle}>{p.dueDate}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(p.payment)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(p.interest)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>฿{fmt(p.interest)}</td>
                         <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(p.principalPortion)}</td>
                         <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(p.remainingBalance)}</td>
                       </tr>
@@ -8584,16 +8689,16 @@ function LoanScheduleModal({ loan, expenses, onClose }) {
             {schedule.map((s) => {
               const paid = paidMap[s.no];
               return (
-                <tr key={s.no} style={paid ? { background: "#E8F5EC" } : undefined}>
+                <tr key={s.no} style={paid ? { background: "#E8EEF8" } : undefined}>
                   <td style={tdStyle}>{s.no}</td>
                   <td style={tdStyle}>{s.dueDate}</td>
                   <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(s.payment)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(s.interest)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>฿{fmt(s.interest)}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(s.principalPortion)}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(s.remainingBalance)}</td>
                   <td style={tdStyle}>
                     {paid ? (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1A5C2A", fontWeight: 600 }}><CheckCircle2 size={14} /> จ่ายแล้ว ({paid.paidDate})</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#1B3A6B", fontWeight: 600 }}><CheckCircle2 size={14} /> จ่ายแล้ว ({paid.paidDate})</span>
                     ) : (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#9ca3af" }}><Clock size={14} /> ยังไม่จ่าย</span>
                     )}
@@ -8680,7 +8785,7 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
               <th style={{ ...thStyle, textAlign: "right" }}>รับเพิ่ม</th>
               <th style={{ ...thStyle, textAlign: "right" }}>รับรวม</th>
               <th style={{ ...thStyle, textAlign: "right" }}>หักไปแล้ว (ในใบขาย)</th>
-              <th style={{ ...thStyle, textAlign: "right", color: "#1A5C2A" }}>คงเหลือ</th>
+              <th style={{ ...thStyle, textAlign: "right", color: "#1B3A6B" }}>คงเหลือ</th>
             </tr>
           </thead>
           <tbody>
@@ -8695,8 +8800,8 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
                 <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>฿{fmt(b.opening)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>+฿{fmt(b.newReceived)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(b.totalReceived)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35" }}>-฿{fmt(b.totalUsed)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: b.remaining > 0 ? "#1A5C2A" : "#991b1b" }}>฿{fmt(b.remaining)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C" }}>-฿{fmt(b.totalUsed)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: b.remaining > 0 ? "#1B3A6B" : "#991b1b" }}>฿{fmt(b.remaining)}</td>
               </tr>
             ))}
             {balances.filter((b) => b.totalReceived > 0 || b.opening > 0).length === 0 && (
@@ -8705,13 +8810,13 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
           </tbody>
           {balances.some((b) => b.totalReceived > 0 || b.opening > 0) && (
             <tfoot>
-              <tr style={{ background: "#f0fdf4", borderTop: "2px solid #1A5C2A" }}>
+              <tr style={{ background: "#f0fdf4", borderTop: "2px solid #1B3A6B" }}>
                 <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(balances.reduce((s, b) => s + b.opening, 0))}</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>+฿{fmt(balances.reduce((s, b) => s + b.newReceived, 0))}</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(balances.reduce((s, b) => s + b.totalReceived, 0))}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>-฿{fmt(balances.reduce((s, b) => s + b.totalUsed, 0))}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(balances.reduce((s, b) => s + b.remaining, 0))}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>-฿{fmt(balances.reduce((s, b) => s + b.totalUsed, 0))}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(balances.reduce((s, b) => s + b.remaining, 0))}</td>
               </tr>
             </tfoot>
           )}
@@ -8738,7 +8843,7 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
                 <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 12 }}>{d.id}</td>
                 <td style={tdStyle}>{d.date}</td>
                 <td style={{ ...tdStyle, fontWeight: 500 }}>{custName(d.customerId)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>+฿{fmt(d.amount)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>+฿{fmt(d.amount)}</td>
                 <td style={tdStyle}>{bankName(d.toStoreBankId)}</td>
                 <td style={tdStyle}>{d.note || "-"}</td>
                 <td style={tdStyle}>
@@ -8753,7 +8858,7 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
             {filtered.length > 0 && (
               <tr style={{ background: "#f9fafb", borderTop: "2px solid #e5e7eb" }}>
                 <td colSpan={3} style={{ ...tdStyle, fontWeight: 700 }}>รวม ({filtered.length} รายการ)</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>+฿{fmt(filtered.reduce((s, d) => s + (Number(d.amount) || 0), 0))}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>+฿{fmt(filtered.reduce((s, d) => s + (Number(d.amount) || 0), 0))}</td>
                 <td colSpan={3} style={tdStyle}></td>
               </tr>
             )}
@@ -9106,9 +9211,9 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
       {/* การ์ดสรุป */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
         {/* การ์ดเดือนนี้ */}
-        <div style={{ background: "#E8F5EC", borderRadius: 12, border: "1px solid #f0c0a0", padding: "14px 16px" }}>
-          <div style={{ fontSize: 11, color: "#1A6B35", marginBottom: 4, fontWeight: 600 }}>เดือนนี้ (สุทธิ)</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#1A6B35" }}>฿{fmt(totalThisMonth)}</div>
+        <div style={{ background: "#E8EEF8", borderRadius: 12, border: "1px solid #f0c0a0", padding: "14px 16px" }}>
+          <div style={{ fontSize: 11, color: "#1E4D8C", marginBottom: 4, fontWeight: 600 }}>เดือนนี้ (สุทธิ)</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(totalThisMonth)}</div>
         </div>
         {/* การ์ดรวมทั้งหมด */}
         <div style={{ background: "#f1efe8", borderRadius: 12, border: "1px solid #d4d0c0", padding: "14px 16px" }}>
@@ -9164,7 +9269,7 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
                         <td style={{ ...tdStyle, fontFamily: "'JetBrains Mono', monospace" }}>{e.taxInvoiceNo || "-"}</td>
                         <td style={{ ...tdStyle, fontWeight: 600, color: "#374151" }}>{e.vendorName || "-"}</td>
                         <td style={tdStyle}></td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>-฿{fmt(t.net)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>-฿{fmt(t.net)}</td>
                         <td style={{ ...tdStyle, textAlign: "right" }} onClick={(e2) => e2.stopPropagation()}>
                           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                             <button style={iconBtn} onClick={() => openView(e)}><Printer size={14} /> ใบสำคัญจ่าย</button>
@@ -9186,7 +9291,7 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
                             </div>
                             {it.description && <div style={{ fontSize: 13, paddingLeft: 2 }}>{it.description}</div>}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35" }}>-฿{fmt(it.amount)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C" }}>-฿{fmt(it.amount)}</td>
                           <td style={tdStyle}></td>
                         </tr>
                       ))}
@@ -9350,12 +9455,12 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
                       <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={it.whtRate} onChange={(e) => updateItem(idx, "whtRate", e.target.value)} placeholder="0" />
                     </Field>
                     <Field label="จำนวนหัก ณ ที่จ่าย">
-                      <div style={{ ...inputStyle, background: "#f3f4f6", textAlign: "right", color: whtAmt > 0 ? "#1A6B35" : "#9ca3af" }}>
+                      <div style={{ ...inputStyle, background: "#f3f4f6", textAlign: "right", color: whtAmt > 0 ? "#1E4D8C" : "#9ca3af" }}>
                         {whtAmt > 0 ? `-${fmt(whtAmt)}` : "0.00"}
                       </div>
                     </Field>
                     <Field label="จำนวนเงินสุทธิ">
-                      <div style={{ ...inputStyle, background: "#E8F5EC", textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>
+                      <div style={{ ...inputStyle, background: "#E8EEF8", textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>
                         {fmt(net)}
                       </div>
                     </Field>
@@ -9380,14 +9485,14 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
             <div style={{ fontWeight: 600, fontSize: 14 }}>การชำระเงิน</div>
           </div>
 
-          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#1A5C2A" }}>
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "12px 16px", fontSize: 13, color: "#1B3A6B" }}>
             บันทึกการจ่ายเงินสำหรับบิลนี้ได้ที่หน้า <strong>"รับชำระ / จ่ายชำระ"</strong> แทน — กดปุ่ม "ค้างจ่าย (ค่าใช้จ่าย)" เพื่อหารายการนี้และบันทึกจ่ายได้ที่นั่น
           </div>
 
           <div style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 16px", marginTop: 12, fontSize: 13 }}>
             <Row label="ยอดที่ต้องชำระ" value={`฿${fmt(formNet)}`} />
             <Row label="ชำระแล้ว" value={`฿${fmt(formPaid)}`} />
-            <Row label="คงค้าง" value={`฿${fmt(formRemaining)}`} bold color={formRemaining > 0 ? "#2E7A42" : "#27500a"} />
+            <Row label="คงค้าง" value={`฿${fmt(formRemaining)}`} bold color={formRemaining > 0 ? "#2456A4" : "#27500a"} />
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
@@ -9467,7 +9572,7 @@ function ExpensesTab({ expenses, setExpenses, storeBankAccounts, loans, setLoans
                         <td style={tdStyle}>{installment.no} / {loan.totalInstallments}</td>
                         <td style={tdStyle}>{installment.dueDate}</td>
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(installment.payment)}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>฿{fmt(installment.interest)}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>฿{fmt(installment.interest)}</td>
                         <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(installment.principalPortion)}</td>
                         <td style={tdStyle}>
                           <button style={btnPrimary} onClick={() => applyInstallment(loan, installment)}>เลือก</button>
@@ -9513,13 +9618,13 @@ function ExpenseVoucherModal({ expense, storeBankAccounts, companySettings, onCl
   return (
     <Modal title={`ใบสำคัญจ่าย · ${expense.refNo || expense.id}`} onClose={onClose} wide>
       <div id="expense-voucher-pdf-content" style={{ background: "#fff", padding: "24px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${cs.accentColor || "#1A6B35"}`, paddingBottom: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${cs.accentColor || "#1E4D8C"}`, paddingBottom: 12, marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {cs.logo && (
               <img src={cs.logo} alt="logo" style={{ height: 50, maxWidth: 100, objectFit: "contain" }} />
             )}
             <div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#1A6B35" }}>{cs.name || "wpn@อุบล"}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#1E4D8C" }}>{cs.name || "Ttm@นครสวรรค์"}</div>
               {cs.taxId && <div style={{ fontSize: 12, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
               {cs.address && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.address}</div>}
               {cs.phone && <div style={{ fontSize: 12, color: "#6b7280" }}>โทร: {cs.phone}</div>}
@@ -9568,7 +9673,7 @@ function ExpenseVoucherModal({ expense, storeBankAccounts, companySettings, onCl
             <Row label="จำนวนเงิน" value={`฿${fmt(amount)}`} />
             <Row label="ภาษีมูลค่าเพิ่มรวม" value={`+฿${fmt(vat)}`} />
             <Row label="หัก ณ ที่จ่ายรวม" value={`-฿${fmt(wht)}`} />
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: "2px solid #1A6B35", fontWeight: 700, fontSize: 15 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderTop: "2px solid #1E4D8C", fontWeight: 700, fontSize: 15 }}>
               <span>จำนวนเงินสุทธิ</span>
               <span>฿{fmt(net)}</span>
             </div>
@@ -9764,7 +9869,7 @@ function ExpenseCategoriesTab({ expenseCategories, setExpenseCategories, expense
                     <td style={{ ...tdStyle, color: "#9ca3af", fontSize: 12 }}>{countSub(main, sub.name)} รายการ</td>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
                       {Number(sub.openingBalance) > 0 ? (
-                        <span style={{ background: "#E8F5EC", color: "#1A5C2A", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
+                        <span style={{ background: "#E8EEF8", color: "#1B3A6B", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
                           ยอดยกมา ฿{fmt(sub.openingBalance)} ({monthLabelOf(sub.openingMonth)})
                         </span>
                       ) : (
@@ -9817,14 +9922,14 @@ function ExpenseCategoriesTab({ expenseCategories, setExpenseCategories, expense
               * ถ้าเปลี่ยนชื่อ ค่าใช้จ่ายทุกรายการที่ใช้หมวดหมู่ย่อยนี้จะถูกเปลี่ยนชื่อตามไปด้วยอัตโนมัติ
             </p>
           )}
-          <div style={{ background: "#E8F5EC", borderRadius: 8, padding: "12px 16px", marginTop: 8 }}>
+          <div style={{ background: "#E8EEF8", borderRadius: 8, padding: "12px 16px", marginTop: 8 }}>
             <Field label="ยอดยกมา (บาท)">
               <input type="number" min={0} style={inputStyle} value={subForm.openingBalance} onChange={(e) => setSubForm({ ...subForm, openingBalance: e.target.value })} placeholder="0" />
             </Field>
             <Field label="ของเดือน">
               <input type="month" style={inputStyle} value={subForm.openingMonth} onChange={(e) => setSubForm({ ...subForm, openingMonth: e.target.value })} />
             </Field>
-            <p style={{ fontSize: 11, color: "#1A5C2A", margin: 0 }}>
+            <p style={{ fontSize: 11, color: "#1B3A6B", margin: 0 }}>
               * ยอดสะสมก่อนเริ่มใช้ระบบ กรอกครั้งเดียว — จะรวมเข้าไปเฉพาะตอนดูแดชบอร์ด/รายงานของเดือนที่ระบุไว้เท่านั้น
             </p>
           </div>
@@ -9841,7 +9946,7 @@ function ExpenseCategoriesTab({ expenseCategories, setExpenseCategories, expense
 // ===================================================================
 // STORE BANK ACCOUNTS TAB (บัญชีธนาคารของร้าน)
 // ===================================================================
-function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expenses, deposits, bankTransfers, customers, loans }) {
+function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expenses, deposits, bankTransfers, customers }) {
   const [modal, setModal] = useState(null);
   const [statementModal, setStatementModal] = useState(null); // {account}
   const [stmtYear, setStmtYear] = useState(new Date().getFullYear());
@@ -9929,28 +10034,15 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
       }
     });
 
-    // เงินกู้ยืม — รับเงินต้นเข้าบัญชี ณ วันที่เริ่มสัญญา
-    (loans || []).forEach((l) => {
-      if (l.receivedBankId === acc.id && l.startDate && inRange(l.startDate)) {
-        rows.push({ date: l.startDate, type: "รับเงินกู้", ref: l.id, description: `รับเงินกู้ — ${l.name}${l.lender ? ` (${l.lender})` : ""}`, credit: Number(l.principal) || 0, debit: 0 });
-      }
-    });
-
     rows.sort((a, b) => a.date.localeCompare(b.date));
 
-    // คำนวณยอดคงเหลือ — รวมเงินกู้ที่รับก่อน startDate เป็น opening balance
+    // คำนวณยอดคงเหลือ
     let balance = Number(acc.openingBalance) || 0;
-    (loans || []).forEach((l) => {
-      if (l.receivedBankId === acc.id && l.startDate && l.startDate < startDate) {
-        balance += Number(l.principal) || 0;
-      }
-    });
-    const startBalance = balance;
     const withBalance = rows.map((r) => {
       balance += r.credit - r.debit;
       return { ...r, balance };
     });
-    return { rows: withBalance, startBalance, endBalance: balance };
+    return { rows: withBalance, startBalance: Number(acc.openingBalance) || 0, endBalance: balance };
   };
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -9968,8 +10060,8 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
           <div key={a.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "16px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 8, background: a.accountType === "เงินสด" ? "#E8F5EC" : "#e6f1fb", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {a.accountType === "เงินสด" ? <Wallet size={18} color="#1A5C2A" /> : <Landmark size={18} color="#185fa5" />}
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: a.accountType === "เงินสด" ? "#E8EEF8" : "#e6f1fb", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {a.accountType === "เงินสด" ? <Wallet size={18} color="#1B3A6B" /> : <Landmark size={18} color="#185fa5" />}
                 </div>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -9977,11 +10069,11 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                     {a.accountType ? (
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 5,
-                        background: a.accountType === "เงินสด" ? "#E8F5EC" : "#e6f1fb",
-                        color: a.accountType === "เงินสด" ? "#1A5C2A" : "#185fa5",
+                        background: a.accountType === "เงินสด" ? "#E8EEF8" : "#e6f1fb",
+                        color: a.accountType === "เงินสด" ? "#1B3A6B" : "#185fa5",
                       }}>{a.accountType}</span>
                     ) : (
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 5, background: "#E8F5EC", color: "#1A5C2A" }}>ยังไม่ระบุประเภท</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 7px", borderRadius: 5, background: "#E8EEF8", color: "#1B3A6B" }}>ยังไม่ระบุประเภท</span>
                     )}
                   </div>
                   <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "#6b7280" }}>{a.accountNo}</div>
@@ -10025,7 +10117,7 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                 {[{key:"month",label:"รายเดือน"},{key:"range",label:"เลือกช่วงวันที่"}].map((opt) => (
                   <button key={opt.key} onClick={() => setStmtMode(opt.key)}
                     style={{ padding:"7px 14px", border:"none", cursor:"pointer", fontSize:13, fontWeight:600,
-                      background: stmtMode===opt.key ? "#0D3D1A" : "#fff",
+                      background: stmtMode===opt.key ? "#0F2548" : "#fff",
                       color: stmtMode===opt.key ? "#fff" : "#6b7280" }}>
                     {opt.label}
                   </button>
@@ -10068,13 +10160,13 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                   <div style={{ color: "#6b7280", marginBottom: 2 }}>ยอดยกมา</div>
                   <div style={{ fontWeight: 700, color: "#185fa5" }}>฿{fmt(stmt.startBalance)}</div>
                 </div>
-                <div style={{ background: "#E8F5EC", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                <div style={{ background: "#E8EEF8", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
                   <div style={{ color: "#6b7280", marginBottom: 2 }}>รับเข้ารวม</div>
-                  <div style={{ fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(totalCredit)}</div>
+                  <div style={{ fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(totalCredit)}</div>
                 </div>
-                <div style={{ background: "#E8F5EC", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                <div style={{ background: "#E8EEF8", borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
                   <div style={{ color: "#6b7280", marginBottom: 2 }}>จ่ายออกรวม</div>
-                  <div style={{ fontWeight: 700, color: "#1A6B35" }}>฿{fmt(totalDebit)}</div>
+                  <div style={{ fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(totalDebit)}</div>
                 </div>
               </div>
 
@@ -10085,8 +10177,8 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                     <th style={thStyle}>ประเภท</th>
                     <th style={thStyle}>เลขอ้างอิง</th>
                     <th style={thStyle}>รายการ</th>
-                    <th style={{ ...thStyle, textAlign: "right", color: "#1A5C2A" }}>ฝาก (เข้า)</th>
-                    <th style={{ ...thStyle, textAlign: "right", color: "#1A6B35" }}>ถอน (ออก)</th>
+                    <th style={{ ...thStyle, textAlign: "right", color: "#1B3A6B" }}>ฝาก (เข้า)</th>
+                    <th style={{ ...thStyle, textAlign: "right", color: "#1E4D8C" }}>ถอน (ออก)</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>คงเหลือ</th>
                   </tr>
                 </thead>
@@ -10098,12 +10190,12 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                   {stmt.rows.map((r, i) => (
                     <tr key={i}>
                       <td style={tdStyle}>{r.date}</td>
-                      <td style={tdStyle}><span style={{ background: r.credit > 0 ? "#E8F5EC" : "#E8F5EC", color: r.credit > 0 ? "#1A5C2A" : "#1A6B35", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500 }}>{r.type}</span></td>
+                      <td style={tdStyle}><span style={{ background: r.credit > 0 ? "#E8EEF8" : "#E8EEF8", color: r.credit > 0 ? "#1B3A6B" : "#1E4D8C", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500 }}>{r.type}</span></td>
                       <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 11 }}>{r.ref}</td>
                       <td style={tdStyle}>{r.description}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A", fontWeight: r.credit > 0 ? 600 : 400 }}>{r.credit > 0 ? `฿${fmt(r.credit)}` : "-"}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35", fontWeight: r.debit > 0 ? 600 : 400 }}>{r.debit > 0 ? `฿${fmt(r.debit)}` : "-"}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.balance >= 0 ? "#1f2937" : "#2E7A42" }}>฿{fmt(r.balance)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B", fontWeight: r.credit > 0 ? 600 : 400 }}>{r.credit > 0 ? `฿${fmt(r.credit)}` : "-"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C", fontWeight: r.debit > 0 ? 600 : 400 }}>{r.debit > 0 ? `฿${fmt(r.debit)}` : "-"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: r.balance >= 0 ? "#1f2937" : "#2456A4" }}>฿{fmt(r.balance)}</td>
                     </tr>
                   ))}
                   {stmt.rows.length === 0 && (
@@ -10113,9 +10205,9 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                 <tfoot>
                   <tr style={{ background: "#f3f4f6" }}>
                     <td colSpan={4} style={{ ...tdStyle, fontWeight: 700 }}>รวม / ยอดคงเหลือสิ้นเดือน</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(totalCredit)}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(totalDebit)}</td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 15, color: stmt.endBalance >= 0 ? "#185fa5" : "#2E7A42" }}>฿{fmt(stmt.endBalance)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(totalCredit)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>฿{fmt(totalDebit)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 15, color: stmt.endBalance >= 0 ? "#185fa5" : "#2456A4" }}>฿{fmt(stmt.endBalance)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -10132,7 +10224,7 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                 const totalRemaining = depositRows.reduce((s, r) => s + r.remaining, 0);
                 return (
                   <div style={{ marginTop: 20 }}>
-                    <div style={{ background: "#1A5C2A", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: 14, borderRadius: "8px 8px 0 0" }}>
+                    <div style={{ background: "#1B3A6B", color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: 14, borderRadius: "8px 8px 0 0" }}>
                       สรุปเงินมัดจำคงเหลือต่อลูกค้า
                     </div>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -10140,8 +10232,8 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                         <tr>
                           <th style={thStyle}>ลูกค้า</th>
                           <th style={{ ...thStyle, textAlign: "right" }}>ยอดยกมา</th>
-                          <th style={{ ...thStyle, textAlign: "right", color: "#1A5C2A" }}>จ่ายมัดจำเพิ่ม</th>
-                          <th style={{ ...thStyle, textAlign: "right", color: "#1A6B35" }}>หักไปแล้ว</th>
+                          <th style={{ ...thStyle, textAlign: "right", color: "#1B3A6B" }}>จ่ายมัดจำเพิ่ม</th>
+                          <th style={{ ...thStyle, textAlign: "right", color: "#1E4D8C" }}>หักไปแล้ว</th>
                           <th style={{ ...thStyle, textAlign: "right" }}>คงเหลือ</th>
                         </tr>
                       </thead>
@@ -10150,16 +10242,16 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                           <tr key={i}>
                             <td style={tdStyle}>{r.name}</td>
                             <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>฿{fmt(r.opening)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>+฿{fmt(r.given)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", color: "#1A6B35" }}>-฿{fmt(r.used)}</td>
-                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: r.remaining > 0 ? "#1A5C2A" : "#6b7280" }}>฿{fmt(r.remaining)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", color: "#1B3A6B" }}>+฿{fmt(r.given)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", color: "#1E4D8C" }}>-฿{fmt(r.used)}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: r.remaining > 0 ? "#1B3A6B" : "#6b7280" }}>฿{fmt(r.remaining)}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr style={{ background: "#E8F5EC" }}>
-                          <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#1A5C2A" }}>รวมเงินมัดจำคงเหลือทั้งหมด</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 15, color: "#1A5C2A" }}>฿{fmt(totalRemaining)}</td>
+                        <tr style={{ background: "#E8EEF8" }}>
+                          <td colSpan={4} style={{ ...tdStyle, fontWeight: 700, color: "#1B3A6B" }}>รวมเงินมัดจำคงเหลือทั้งหมด</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontSize: 15, color: "#1B3A6B" }}>฿{fmt(totalRemaining)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -10183,9 +10275,9 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                   style={{
                     flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                     padding: "9px 14px", borderRadius: 8, fontSize: 14, cursor: "pointer",
-                    border: form.accountType === t ? "1.5px solid #2E8B45" : "1px solid #d1d5db",
-                    background: form.accountType === t ? "#E8F5EC" : "#fff",
-                    color: form.accountType === t ? "#0D3D1A" : "#6b7280",
+                    border: form.accountType === t ? "1.5px solid #2855A0" : "1px solid #d1d5db",
+                    background: form.accountType === t ? "#E8EEF8" : "#fff",
+                    color: form.accountType === t ? "#0F2548" : "#6b7280",
                     fontWeight: form.accountType === t ? 600 : 400,
                   }}
                 >
@@ -10193,7 +10285,7 @@ function StoreBankAccountsTab({ accounts, setAccounts, purchases, sales, expense
                 </button>
               ))}
             </div>
-            {!form.accountType && <p style={{ fontSize: 11, color: "#1A5C2A", marginTop: 4, marginBottom: 0 }}>* กรุณาเลือกประเภทบัญชี เพื่อให้แสดงผลถูกกลุ่มในแดชบอร์ด</p>}
+            {!form.accountType && <p style={{ fontSize: 11, color: "#1B3A6B", marginTop: 4, marginBottom: 0 }}>* กรุณาเลือกประเภทบัญชี เพื่อให้แสดงผลถูกกลุ่มในแดชบอร์ด</p>}
           </Field>
           <Field label="ธนาคาร">
   <input style={inputStyle} list="bank-name-options" value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} placeholder="เลือกหรือพิมพ์ชื่อธนาคาร" />
@@ -10262,7 +10354,7 @@ function BankTransferTab({ storeBankAccounts, bankTransfers, setBankTransfers })
       </Header>
 
       {storeBankAccounts.length < 2 && (
-        <div style={{ background: "#E8F5EC", border: "1px solid #f0c070", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#1A5C2A" }}>
+        <div style={{ background: "#E8EEF8", border: "1px solid #f0c070", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#1B3A6B" }}>
           ⚠️ ต้องมีบัญชีธนาคารร้านอย่างน้อย 2 บัญชีเพื่อโยกเงิน — ไปที่ "บัญชีธนาคารร้าน" เพื่อเพิ่ม
         </div>
       )}
@@ -10273,8 +10365,8 @@ function BankTransferTab({ storeBankAccounts, bankTransfers, setBankTransfers })
           {storeBankAccounts.map((b) => (
             <div key={b.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", padding: "14px 16px" }}>
               <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{b.bankName} {b.accountNo}</div>
-              <div style={{ fontSize: 12, color: "#1A5C2A" }}>รับโอนเข้า: ฿{fmt(totalIn(b.id))}</div>
-              <div style={{ fontSize: 12, color: "#1A6B35" }}>โอนออก: ฿{fmt(totalOut(b.id))}</div>
+              <div style={{ fontSize: 12, color: "#1B3A6B" }}>รับโอนเข้า: ฿{fmt(totalIn(b.id))}</div>
+              <div style={{ fontSize: 12, color: "#1E4D8C" }}>โอนออก: ฿{fmt(totalOut(b.id))}</div>
             </div>
           ))}
         </div>
@@ -10290,9 +10382,9 @@ function BankTransferTab({ storeBankAccounts, bankTransfers, setBankTransfers })
                 <span style={{ fontSize: 13, color: "#6b7280" }}>{t.date}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-                <span style={{ fontWeight: 600, color: "#1A6B35" }}>{bankName(t.fromBankId)}</span>
+                <span style={{ fontWeight: 600, color: "#1E4D8C" }}>{bankName(t.fromBankId)}</span>
                 <ArrowRight size={14} color="#9ca3af" />
-                <span style={{ fontWeight: 600, color: "#1A5C2A" }}>{bankName(t.toBankId)}</span>
+                <span style={{ fontWeight: 600, color: "#1B3A6B" }}>{bankName(t.toBankId)}</span>
               </div>
               {t.note && <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4 }}>{t.note}</div>}
             </div>
@@ -10356,11 +10448,14 @@ function AssetsTab({ assets, setAssets }) {
 
   const annualDepreciation = (a) => a.depreciationMethod === "เส้นตรง" ? Number(a.cost) / Number(a.lifeYears) : 0;
   const monthlyDepreciation = (a) => annualDepreciation(a) / 12;
-  const yearsUsed = (a) => {
-    const ms = new Date() - new Date(a.purchaseDate);
-    return ms / (1000 * 60 * 60 * 24 * 365.25);
+  const monthsUsed = (a) => {
+    if (!a.purchaseDate) return 0;
+    const buy = new Date(a.purchaseDate);
+    const today = new Date();
+    // นับเดือนเต็มๆ ไม่รวมเวลา ไม่ทำให้กระพือ
+    return (today.getFullYear() - buy.getFullYear()) * 12 + (today.getMonth() - buy.getMonth());
   };
-  const accumulatedDepreciation = (a) => Math.min(Number(a.cost), annualDepreciation(a) * yearsUsed(a));
+  const accumulatedDepreciation = (a) => Math.min(Number(a.cost), monthlyDepreciation(a) * monthsUsed(a));
   const bookValue = (a) => Math.max(0, Number(a.cost) - accumulatedDepreciation(a));
 
   const filtered = assets.filter((a) => a.name.includes(search) || a.category.includes(search) || a.id.includes(search)).filter((a) => (!dateFrom || (a.purchaseDate || "") >= dateFrom) && (!dateTo || (a.purchaseDate || "") <= dateTo))
@@ -10375,32 +10470,22 @@ function AssetsTab({ assets, setAssets }) {
   };
 
   const totalCost = assets.reduce((s, a) => s + Number(a.cost), 0);
-  const totalBookValue = assets.reduce((s, a) => s + bookValue(a), 0);
-  const totalAccDep = assets.reduce((s, a) => s + accumulatedDepreciation(a), 0);
 
   return (
     <div>
-      <Header title="ทะเบียนทรัพย์สิน" subtitle="บันทึกและคำนวณค่าเสื่อมราคาทรัพย์สินของร้าน">
+      <Header title="ทะเบียนทรัพย์สิน" subtitle="บันทึกทรัพย์สินของร้าน">
         <button style={btnPrimary} onClick={() => { setForm(blankForm()); setModal({ mode: "add" }); }}><Plus size={16} /> เพิ่มทรัพย์สิน</button>
       </Header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
-        {[
-          { label: "ราคาทุนรวมทั้งหมด", value: fmt(totalCost), color: "#185fa5", bg: "#e6f1fb" },
-          { label: "ค่าเสื่อมราคาสะสม", value: fmt(totalAccDep), color: "#1A5C2A", bg: "#E8F5EC" },
-          { label: "มูลค่าตามบัญชีรวม", value: fmt(totalBookValue), color: "#1A5C2A", bg: "#E8F5EC" },
-        ].map((c) => (
-          <div key={c.label} style={{ background: c.bg, borderRadius: 12, padding: "14px 18px" }}>
-            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label}</div>
-            <div style={{ fontWeight: 700, fontSize: 20, color: c.color }}>฿{c.value}</div>
-          </div>
-        ))}
+      <div style={{ background: "#e6f1fb", borderRadius: 12, padding: "14px 18px", marginBottom: 20, display: "inline-block" }}>
+        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>ราคาทุนรวมทั้งหมด</div>
+        <div style={{ fontWeight: 700, fontSize: 20, color: "#185fa5" }}>฿{fmt(totalCost)}</div>
       </div>
 
       <SearchBar value={search} onChange={setSearch} placeholder="ค้นหาชื่อทรัพย์สิน, หมวดหมู่..." dateFrom={dateFrom} dateTo={dateTo} onDateFromChange={setDateFrom} onDateToChange={setDateTo} />
 
       <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
           <thead>
             <tr>
               <th style={thStyle}>รหัส</th>
@@ -10408,10 +10493,7 @@ function AssetsTab({ assets, setAssets }) {
               <th style={thStyle}>หมวดหมู่</th>
               <th style={thStyle}>วันที่ซื้อ</th>
               <th style={{ ...thStyle, textAlign: "right" }}>ราคาทุน</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>อายุ (ปี)</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>เสื่อม/ปี</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>ค่าเสื่อมสะสม</th>
-              <th style={{ ...thStyle, textAlign: "right" }}>มูลค่าตามบัญชี</th>
+              <th style={thStyle}>หมายเหตุ</th>
               <th style={{ ...thStyle, textAlign: "right" }}>จัดการ</th>
             </tr>
           </thead>
@@ -10422,37 +10504,27 @@ function AssetsTab({ assets, setAssets }) {
                 <td style={{ ...tdStyle, fontWeight: 600 }}>{a.name}</td>
                 <td style={tdStyle}><Badge text={a.category} /></td>
                 <td style={tdStyle}>{a.purchaseDate}</td>
-                <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(a.cost)}</td>
-                <td style={{ ...tdStyle, textAlign: "right" }}>{a.lifeYears}</td>
-                <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(annualDepreciation(a))}</td>
-                <td style={{ ...tdStyle, textAlign: "right", color: "#1A5C2A" }}>{fmt(accumulatedDepreciation(a))}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>{fmt(bookValue(a))}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#185fa5" }}>฿{fmt(a.cost)}</td>
+                <td style={{ ...tdStyle, color: "#6b7280", fontSize: 12 }}>{a.note}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>
                   <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                     <button style={iconBtn} onClick={() => { setForm({ ...a }); setModal({ mode: "edit", item: a }); }}><Edit2 size={14} /></button>
-                    <button style={btnDanger} onClick={() => confirmAction(`ต้องการลบทรัพย์สิน "${a.name}" ใช่หรือไม่?`, () => setAssets(assets.filter((x) => x.id !== a.id)))}><Trash2 size={14} /></button>
+                    <button style={iconBtn} onClick={() => setAssets(assets.filter(x => x.id !== a.id))}><Trash2 size={14} /></button>
                   </div>
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && <tr><td colSpan={10} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่พบทรัพย์สิน</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ยังไม่มีทรัพย์สิน</td></tr>}
           </tbody>
-          {assets.length > 0 && (
-            <tfoot>
-              <tr>
-                <td colSpan={4} style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(totalCost)}</td>
-                <td style={tdStyle}></td>
-                <td style={tdStyle}></td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>{fmt(totalAccDep)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>{fmt(totalBookValue)}</td>
-                <td style={tdStyle}></td>
-              </tr>
-            </tfoot>
-          )}
+          <tfoot>
+            <tr style={{ borderTop: "2px solid #e5e7eb", background: "#f9fafb" }}>
+              <td colSpan={4} style={{ ...tdStyle, fontWeight: 700 }}>รวม {filtered.length} รายการ</td>
+              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(filtered.reduce((s,a)=>s+Number(a.cost),0))}</td>
+              <td colSpan={2}></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
-
       {modal && (
         <Modal title={modal.mode === "add" ? "เพิ่มทรัพย์สิน" : "แก้ไขทรัพย์สิน"} onClose={() => setModal(null)} wide>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
@@ -10465,21 +10537,8 @@ function AssetsTab({ assets, setAssets }) {
             </Field>
             <Field label="วันที่ซื้อ"><input type="date" style={inputStyle} value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} /></Field>
             <Field label="ราคาทุน (บาท)"><input type="number" min={0} style={inputStyle} value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></Field>
-            <Field label="อายุการใช้งาน (ปี)"><input type="number" min={1} max={50} style={inputStyle} value={form.lifeYears} onChange={(e) => setForm({ ...form, lifeYears: e.target.value })} /></Field>
-            <Field label="วิธีเสื่อมราคา">
-              <select style={inputStyle} value={form.depreciationMethod} onChange={(e) => setForm({ ...form, depreciationMethod: e.target.value })}>
-                <option value="เส้นตรง">เส้นตรง (Straight-Line)</option>
-                <option value="ยอดคงเหลือลดลง">ยอดคงเหลือลดลง</option>
-              </select>
-            </Field>
           </div>
           <Field label="หมายเหตุ"><input style={inputStyle} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
-          {Number(form.cost) > 0 && Number(form.lifeYears) > 0 && (
-            <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 16px", marginTop: 8, fontSize: 13 }}>
-              <Row label="ค่าเสื่อมราคาต่อปี" value={`฿${fmt(Number(form.cost) / Number(form.lifeYears))}`} />
-              <Row label="ค่าเสื่อมราคาต่อเดือน" value={`฿${fmt(Number(form.cost) / Number(form.lifeYears) / 12)}`} />
-            </div>
-          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
             <button style={btnSecondary} onClick={() => setModal(null)}>ยกเลิก</button>
             <button style={btnPrimary} onClick={save}><Save size={16} /> บันทึก</button>
@@ -10495,28 +10554,28 @@ function AssetsTab({ assets, setAssets }) {
 // COMPANY SETTINGS TAB (ตั้งค่าร้าน / โลโก้)
 // ===================================================================
 function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile }) {
-  // ใช้ local draft state เพื่อป้องกัน Supabase sync overwrite ขณะพิมพ์
   const [draft, setDraft] = useState(() => ({ ...(settings || {}) }));
   const [draftSP, setDraftSP] = useState(() => ({ ...(shopProfile || {}) }));
   const [saved, setSaved] = useState(false);
-  const [isDirty, setIsDirty] = useState(false);
+  const initializedRef = React.useRef(false);
 
-  // sync draft เมื่อ settings โหลดจาก Supabase ครั้งแรก (ถ้า draft ยังว่างหรือยังไม่แก้ไข)
-  const didInitRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!didInitRef.current && settings && Object.keys(settings).length > 0) {
+  // sync draft เฉพาะครั้งแรกที่ข้อมูลโหลดจาก Supabase มาถึง
+  useEffect(() => {
+    if (!initializedRef.current && settings && Object.keys(settings).length > 0) {
       setDraft({ ...settings });
-      didInitRef.current = true;
+      initializedRef.current = true;
     }
   }, [settings]);
-  React.useEffect(() => {
-    if (!didInitRef.current && shopProfile && Object.keys(shopProfile).length > 0) {
+  const initializedSPRef = React.useRef(false);
+  useEffect(() => {
+    if (!initializedSPRef.current && shopProfile && Object.keys(shopProfile).length > 0) {
       setDraftSP({ ...shopProfile });
+      initializedSPRef.current = true;
     }
   }, [shopProfile]);
 
-  const set = (field, value) => { setDraft(prev => ({ ...prev, [field]: value })); setIsDirty(true); };
-  const setSP = (field, value) => { setDraftSP(prev => ({ ...prev, [field]: value })); setIsDirty(true); };
+  const set = (field, value) => { setDraft((prev) => ({ ...prev, [field]: value })); setSaved(false); };
+  const setSP = (field, value) => { setDraftSP((prev) => ({ ...prev, [field]: value })); setSaved(false); };
 
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
@@ -10539,49 +10598,46 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
   const handleSave = () => {
     setSettings(draft);
     setShopProfile(draftSP);
-    setIsDirty(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
-  // ใช้ draft แทน cs/sp เดิม
   const cs = draft;
   const sp = draftSP;
-
   const sCard = { background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "20px 24px", marginBottom: 16 };
 
   return (
     <div>
       <Header title="ตั้งค่ากิจการ" subtitle="แยกเป็น 2 ส่วน — โปรไฟล์หน้าแอป (sidebar) และข้อมูลเอกสาร/บิล">
-        <button style={{ ...btnPrimary, background: isDirty ? "#b45309" : undefined }} onClick={handleSave}>
-          {saved ? <><CheckCircle2 size={16} /> บันทึกแล้ว!</> : isDirty ? <><Save size={16} /> บันทึก (มีการแก้ไข)</> : <><Save size={16} /> บันทึก</>}
+        <button style={{ ...btnPrimary, background: saved ? "#185fa5" : "#ea580c" }} onClick={handleSave}>
+          {saved ? <><CheckCircle2 size={16} /> บันทึกแล้ว!</> : <><Save size={16} /> บันทึก (มีการแก้ไข)</>}
         </button>
       </Header>
 
       {/* ===== ส่วนที่ 1: โปรไฟล์ Sidebar ===== */}
-      <div style={{ ...sCard, border: "2px solid #2E8B45" }}>
+      <div style={{ ...sCard, border: "2px solid #2855A0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6, background: "#0D3D1A", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Boxes size={14} color="#C0E5CC" />
+          <div style={{ width: 28, height: 28, borderRadius: 6, background: "#0F2548", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Boxes size={14} color="#C5D5F0" />
           </div>
-          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0D3D1A" }}>โปรไฟล์แอป (แสดงในแถบเมนูซ้าย)</h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0F2548" }}>โปรไฟล์แอป (แสดงในแถบเมนูซ้าย)</h3>
           <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>แยกอิสระจากข้อมูลบิล</span>
         </div>
 
         <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
           {/* sidebar logo preview */}
           <div style={{ flexShrink: 0 }}>
-            <div style={{ background: "#0D3D1A", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, width: 200 }}>
+            <div style={{ background: "#0F2548", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, width: 200 }}>
               {sp.logo ? (
                 <img src={sp.logo} alt="logo" style={{ width: 38, height: 38, borderRadius: 8, objectFit: "contain", background: "#fff", padding: 3 }} />
               ) : (
-                <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2E8B45", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 8, background: "#2855A0", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Boxes size={18} color="#4A0E0E" />
                 </div>
               )}
               <div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#E8F5EC", lineHeight: 1.2 }}>{sp.name || "ชื่อร้าน"}</div>
-                <div style={{ fontSize: 10, color: "#C0E5CC" }}>{sp.nameEn || "คำบรรยาย"}</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#E8EEF8", lineHeight: 1.2 }}>{sp.name || "ชื่อร้าน"}</div>
+                <div style={{ fontSize: 10, color: "#C5D5F0" }}>{sp.nameEn || "คำบรรยาย"}</div>
               </div>
             </div>
             <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", marginTop: 6 }}>ตัวอย่าง sidebar</div>
@@ -10589,7 +10645,7 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
 
           <div style={{ flex: 1, minWidth: 200 }}>
             <Field label="ชื่อร้าน (บรรทัดบนใน sidebar)">
-              <input style={inputStyle} value={sp.name || ""} onChange={(e) => setSP("name", e.target.value)} placeholder="เช่น wpn@อุบล" />
+              <input style={inputStyle} value={sp.name || ""} onChange={(e) => setSP("name", e.target.value)} placeholder="เช่น Ttm@นครสวรรค์" />
             </Field>
             <Field label="คำบรรยาย (บรรทัดล่างใน sidebar)">
               <input style={inputStyle} value={sp.nameEn || ""} onChange={(e) => setSP("nameEn", e.target.value)} placeholder="เช่น ระบบซื้อขายของเก่ารีไซเคิล" />
@@ -10650,7 +10706,7 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
         <h4 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600, color: "#6b7280" }}>ข้อมูลร้านบนบิล</h4>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
           <Field label="ชื่อร้าน / บริษัท (ภาษาไทย)">
-            <input style={inputStyle} value={cs.name || ""} onChange={(e) => set("name", e.target.value)} placeholder="เช่น wpn@อุบล" />
+            <input style={inputStyle} value={cs.name || ""} onChange={(e) => set("name", e.target.value)} placeholder="เช่น Ttm@นครสวรรค์" />
           </Field>
           <Field label="ชื่อร้าน / บริษัท (English)">
             <input style={inputStyle} value={cs.nameEn || ""} onChange={(e) => set("nameEn", e.target.value)} />
@@ -10686,8 +10742,8 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
           <div></div>
           <Field label="สีหลักเอกสาร">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="color" value={cs.primaryColor || "#1A5C2A"} onChange={(e) => set("primaryColor", e.target.value)} style={{ width: 40, height: 36, border: "1px solid #e5e7eb", borderRadius: 6, cursor: "pointer" }} />
-              <input style={{ ...inputStyle, flex: 1 }} value={cs.primaryColor || "#1A5C2A"} onChange={(e) => set("primaryColor", e.target.value)} />
+              <input type="color" value={cs.primaryColor || "#1B3A6B"} onChange={(e) => set("primaryColor", e.target.value)} style={{ width: 40, height: 36, border: "1px solid #e5e7eb", borderRadius: 6, cursor: "pointer" }} />
+              <input style={{ ...inputStyle, flex: 1 }} value={cs.primaryColor || "#1B3A6B"} onChange={(e) => set("primaryColor", e.target.value)} />
             </div>
           </Field>
           <Field label="สีรองเอกสาร">
@@ -10709,7 +10765,7 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
       <div style={{ ...sCard, background: "#f9fafb" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700 }}>👁 ตัวอย่างหัวบิล</h3>
         <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${cs.primaryColor || "#1A5C2A"}`, paddingBottom: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid ${cs.primaryColor || "#1B3A6B"}`, paddingBottom: 10, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {cs.logo ? (
                 <img src={cs.logo} alt="logo" style={{ height: 48, maxWidth: 90, objectFit: "contain" }} />
@@ -10719,13 +10775,13 @@ function CompanySettingsTab({ settings, setSettings, shopProfile, setShopProfile
                 </div>
               )}
               <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: cs.primaryColor || "#1A5C2A" }}>{cs.name || "ชื่อร้านบนบิล"}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: cs.primaryColor || "#1B3A6B" }}>{cs.name || "ชื่อร้านบนบิล"}</div>
                 {cs.taxId && <div style={{ fontSize: 11, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
                 {cs.phone && <div style={{ fontSize: 11, color: "#6b7280" }}>โทร: {cs.phone}</div>}
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: cs.primaryColor || "#1A5C2A" }}>{cs.purchaseTitle || "ใบรับสินค้า"}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: cs.primaryColor || "#1B3A6B" }}>{cs.purchaseTitle || "ใบรับสินค้า"}</div>
               <div style={{ fontSize: 11, color: "#6b7280" }}>เลขที่: PO260617001</div>
             </div>
           </div>
@@ -10836,7 +10892,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
           {[{key:"month",label:"รายเดือน"},{key:"range",label:"เลือกช่วง"}].map((opt) => (
             <button key={opt.key} onClick={() => setMode(opt.key)}
               style={{ padding:"7px 14px", border:"none", cursor:"pointer", fontSize:13, fontWeight:600,
-                background: mode===opt.key ? "#0D3D1A" : "#fff", color: mode===opt.key ? "#fff" : "#6b7280" }}>
+                background: mode===opt.key ? "#0F2548" : "#fff", color: mode===opt.key ? "#fff" : "#6b7280" }}>
               {opt.label}
             </button>
           ))}
@@ -10862,21 +10918,21 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
 
       {/* Summary Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
-        <div style={{ background: "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-          <div style={{ fontSize: 12, color: "#1A6B35", marginBottom: 4 }}>ภาษีซื้อ (Input VAT)</div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: "#1A6B35" }}>฿{fmt(totalInputVat)}</div>
+        <div style={{ background: "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+          <div style={{ fontSize: 12, color: "#1E4D8C", marginBottom: 4 }}>ภาษีซื้อ (Input VAT)</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: "#1E4D8C" }}>฿{fmt(totalInputVat)}</div>
           <div style={{ fontSize: 11, color: "#9ca3af" }}>ฐานภาษี ฿{fmt(totalInputBase)}</div>
         </div>
-        <div style={{ background: "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-          <div style={{ fontSize: 12, color: "#1A5C2A", marginBottom: 4 }}>ภาษีขาย (Output VAT)</div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: "#1A5C2A" }}>฿{fmt(totalOutputVat)}</div>
+        <div style={{ background: "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+          <div style={{ fontSize: 12, color: "#1B3A6B", marginBottom: 4 }}>ภาษีขาย (Output VAT)</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: "#1B3A6B" }}>฿{fmt(totalOutputVat)}</div>
           <div style={{ fontSize: 11, color: "#9ca3af" }}>ฐานภาษี ฿{fmt(totalOutputBase)}</div>
         </div>
-        <div style={{ background: vatDiff >= 0 ? "#e6f1fb" : "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-          <div style={{ fontSize: 12, color: vatDiff >= 0 ? "#185fa5" : "#1A5C2A", marginBottom: 4 }}>
+        <div style={{ background: vatDiff >= 0 ? "#e6f1fb" : "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+          <div style={{ fontSize: 12, color: vatDiff >= 0 ? "#185fa5" : "#1B3A6B", marginBottom: 4 }}>
             {vatDiff >= 0 ? "VAT ต้องชำระ" : "VAT ขอคืน"}
           </div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: vatDiff >= 0 ? "#185fa5" : "#1A5C2A" }}>฿{fmt(Math.abs(vatDiff))}</div>
+          <div style={{ fontWeight: 700, fontSize: 20, color: vatDiff >= 0 ? "#185fa5" : "#1B3A6B" }}>฿{fmt(Math.abs(vatDiff))}</div>
         </div>
         <div style={{ background: "#eeedfe", borderRadius: 12, padding: "14px 18px" }}>
           <div style={{ fontSize: 12, color: "#3c3489", marginBottom: 4 }}>หัก ณ ที่จ่าย (WHT)</div>
@@ -10888,7 +10944,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
       <div id="tax-content">
         {/* ภาษีซื้อ */}
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ background: "#E8F5EC", padding: "10px 16px", fontWeight: 700, fontSize: 14, color: "#1A6B35" }}>
+          <div style={{ background: "#E8EEF8", padding: "10px 16px", fontWeight: 700, fontSize: 14, color: "#1E4D8C" }}>
             ภาษีซื้อ (Input VAT) — {periodLabel}
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -10905,7 +10961,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
                   <td style={tdStyle}>{r.description}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{r.vatRate}%</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(r.base)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A6B35" }}>{fmt(r.vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1E4D8C" }}>{fmt(r.vat)}</td>
                 </tr>
               ))}
               {inputVatRows.length === 0 && <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีรายการภาษีซื้อในช่วงนี้</td></tr>}
@@ -10914,7 +10970,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
               <tr>
                 <td colSpan={4} style={{ ...tdStyle, fontWeight: 700 }}>รวมภาษีซื้อ</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(totalInputBase)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>{fmt(totalInputVat)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>{fmt(totalInputVat)}</td>
               </tr>
             </tfoot>}
           </table>
@@ -10922,7 +10978,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
 
         {/* ภาษีขาย */}
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ background: "#E8F5EC", padding: "10px 16px", fontWeight: 700, fontSize: 14, color: "#1A5C2A" }}>
+          <div style={{ background: "#E8EEF8", padding: "10px 16px", fontWeight: 700, fontSize: 14, color: "#1B3A6B" }}>
             ภาษีขาย (Output VAT) — {periodLabel}
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -10939,7 +10995,7 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
                   <td style={tdStyle}>{r.description}</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{r.vatRate}%</td>
                   <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(r.base)}</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>{fmt(r.vat)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>{fmt(r.vat)}</td>
                 </tr>
               ))}
               {outputVatRows.length === 0 && <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีรายการภาษีขายในช่วงนี้</td></tr>}
@@ -10948,21 +11004,21 @@ function TaxSummaryTab({ purchases, sales, expenses }) {
               <tr>
                 <td colSpan={4} style={{ ...tdStyle, fontWeight: 700 }}>รวมภาษีขาย</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(totalOutputBase)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>{fmt(totalOutputVat)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>{fmt(totalOutputVat)}</td>
               </tr>
             </tfoot>}
           </table>
         </div>
 
         {/* สรุป */}
-        <div style={{ background: "#fff", borderRadius: 12, border: "2px solid #0D3D1A", padding: "18px 20px" }}>
-          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: "#0D3D1A" }}>สรุปภาษีสุทธิ — {periodLabel}</div>
+        <div style={{ background: "#fff", borderRadius: 12, border: "2px solid #0F2548", padding: "18px 20px" }}>
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: "#0F2548" }}>สรุปภาษีสุทธิ — {periodLabel}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, fontSize: 14 }}>
-            <div><span style={{ color: "#6b7280" }}>ภาษีขาย</span><div style={{ fontWeight: 700, fontSize: 18, color: "#1A5C2A" }}>฿{fmt(totalOutputVat)}</div></div>
-            <div><span style={{ color: "#6b7280" }}>หัก ภาษีซื้อ</span><div style={{ fontWeight: 700, fontSize: 18, color: "#1A6B35" }}>฿{fmt(totalInputVat)}</div></div>
+            <div><span style={{ color: "#6b7280" }}>ภาษีขาย</span><div style={{ fontWeight: 700, fontSize: 18, color: "#1B3A6B" }}>฿{fmt(totalOutputVat)}</div></div>
+            <div><span style={{ color: "#6b7280" }}>หัก ภาษีซื้อ</span><div style={{ fontWeight: 700, fontSize: 18, color: "#1E4D8C" }}>฿{fmt(totalInputVat)}</div></div>
             <div>
               <span style={{ color: "#6b7280" }}>{vatDiff >= 0 ? "ภาษีต้องชำระ" : "ภาษีขอคืน"}</span>
-              <div style={{ fontWeight: 700, fontSize: 20, color: vatDiff >= 0 ? "#185fa5" : "#1A5C2A" }}>฿{fmt(Math.abs(vatDiff))}</div>
+              <div style={{ fontWeight: 700, fontSize: 20, color: vatDiff >= 0 ? "#185fa5" : "#1B3A6B" }}>฿{fmt(Math.abs(vatDiff))}</div>
               <div style={{ fontSize: 11, color: "#9ca3af" }}>{vatDiff >= 0 ? "นำส่งกรมสรรพากร" : "ยื่นขอคืนภาษี"}</div>
             </div>
           </div>
@@ -11183,9 +11239,9 @@ function DeliveryTab({ deliveries, setDeliveries, customers, sales, products, co
               <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                 <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(form.items.reduce((s, it) => s + (Number(it.qty) || 0), 0))} กก.</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>{fmt(form.items.reduce((s, it) => s + (Number(it.containerWeight) || 0), 0))} กก.</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>{fmt(form.items.reduce((s, it) => s + (Number(it.containerWeight) || 0), 0))} กก.</td>
                 <td style={tdStyle}></td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>{fmt(form.items.reduce((s, it) => s + netQtyOf(it), 0))} กก.</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>{fmt(form.items.reduce((s, it) => s + netQtyOf(it), 0))} กก.</td>
                 <td style={tdStyle}></td>
               </tr>
             </tfoot>
@@ -11213,7 +11269,7 @@ function DeliveryTab({ deliveries, setDeliveries, customers, sales, products, co
                   <img src={cs.logo} alt="logo" style={{ height: 50, maxWidth: 100, objectFit: "contain" }} />
                 )}
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#185fa5" }}>{cs.name || "wpn@อุบล"}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: cs.accentColor || "#185fa5" }}>{cs.name || "Ttm@นครสวรรค์"}</div>
                   {cs.taxId && <div style={{ fontSize: 12, color: "#6b7280" }}>เลขผู้เสียภาษี: {cs.taxId}</div>}
                   {cs.address && <div style={{ fontSize: 12, color: "#6b7280" }}>{cs.address}</div>}
                   {cs.phone && <div style={{ fontSize: 12, color: "#6b7280" }}>โทร: {cs.phone}</div>}
@@ -11251,9 +11307,9 @@ function DeliveryTab({ deliveries, setDeliveries, customers, sales, products, co
                 <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
                   <td colSpan={2} style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
                   <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(modal.item.items.reduce((s, it) => s + (Number(it.qty) || 0), 0))} กก.</td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>{fmt(modal.item.items.reduce((s, it) => s + (Number(it.containerWeight) || 0), 0))} กก.</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1E4D8C" }}>{fmt(modal.item.items.reduce((s, it) => s + (Number(it.containerWeight) || 0), 0))} กก.</td>
                   <td style={tdStyle}></td>
-                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>{fmt(deliveryNetTotal(modal.item))} กก.</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>{fmt(deliveryNetTotal(modal.item))} กก.</td>
                 </tr>
               </tfoot>
             </table>
@@ -11286,46 +11342,19 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [reportView, setReportView] = useState("monthly"); // "monthly" | "yearly"
   const [editingShareholders, setEditingShareholders] = useState(false);
-
-  // ใช้ local draft state สำหรับยอดยกมา เพื่อป้องกัน Supabase sync overwrite ขณะพิมพ์
-  const [openingRevenue, setOpeningRevenueLocal] = useState(() => Number(companySettings?.openingRevenue) || 0);
-  const [openingCost, setOpeningCostLocal] = useState(() => Number(companySettings?.openingCost) || 0);
-  const [openingMonth, setOpeningMonthLocal] = useState(() => companySettings?.openingMonth || "");
-  const [openingProfit, setOpeningProfitLocal] = useState(() => Number(companySettings?.openingProfit) || 0);
-  const [landDebtReport, setLandDebtLocal] = useState(() => Number(companySettings?.landDebt) || 0);
-  const [openingExpense, setOpeningExpenseLocal] = useState(() => Number(companySettings?.openingExpense) || 0);
-  const [openingPurchase, setOpeningPurchaseLocal] = useState(() => Number(companySettings?.openingPurchase) || 0);
-
-  // sync จาก companySettings เมื่อโหลดครั้งแรกเท่านั้น
-  const didInitOpeningRef = React.useRef(false);
-  React.useEffect(() => {
-    if (!didInitOpeningRef.current && companySettings && Object.keys(companySettings).length > 0) {
-      setOpeningRevenueLocal(Number(companySettings.openingRevenue) || 0);
-      setOpeningCostLocal(Number(companySettings.openingCost) || 0);
-      setOpeningMonthLocal(companySettings.openingMonth || "");
-      setOpeningProfitLocal(Number(companySettings.openingProfit) || 0);
-      setLandDebtLocal(Number(companySettings.landDebt) || 0);
-      setOpeningExpenseLocal(Number(companySettings.openingExpense) || 0);
-      setOpeningPurchaseLocal(Number(companySettings.openingPurchase) || 0);
-      didInitOpeningRef.current = true;
-    }
-  }, [companySettings]);
-
-  // setters — อัปเดต local state + commit ไปที่ companySettings
-  const setOpeningRevenue = (v) => { setOpeningRevenueLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingRevenue: Number(v) || 0 })); };
-  const setOpeningCost = (v) => { setOpeningCostLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingCost: Number(v) || 0 })); };
-  const setOpeningMonth = (v) => { setOpeningMonthLocal(v); setCompanySettings(prev => ({ ...prev, openingMonth: v })); };
-  const setOpeningProfit = (v) => { setOpeningProfitLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingProfit: Number(v) || 0 })); };
-  const setLandDebtReport = (v) => { setLandDebtLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, landDebt: Number(v) || 0 })); };
-  const setOpeningExpense = (v) => { setOpeningExpenseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingExpense: Number(v) || 0 })); };
-  const setOpeningPurchase = (v) => { setOpeningPurchaseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingPurchase: Number(v) || 0 })); };
+  const openingRevenue = Number(companySettings?.openingRevenue) || 0;
+  const openingCost = Number(companySettings?.openingCost) || 0;
+  const openingMonth = companySettings?.openingMonth || "";
+  const setOpeningRevenue = (v) => setCompanySettings((prev) => ({ ...prev, openingRevenue: Number(v) || 0 }));
+  const setOpeningCost = (v) => setCompanySettings((prev) => ({ ...prev, openingCost: Number(v) || 0 }));
+  const setOpeningMonth = (v) => setCompanySettings((prev) => ({ ...prev, openingMonth: v }));
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const yearOptions = [];
   for (let y = 2024; y <= now.getFullYear() + 2; y++) yearOptions.push(y);
 
   const movements = inventory?.movements || [];
-  // มูลค่าสต็อก ณ จุดใดจุดหนึ่ง = ผลรวมมูลค่า "in" ลบมูลค่า "out"/"withdraw" (costConsumed) ของรายการที่เกิดขึ้น "ก่อน" วันที่ที่กำหนด (exclusive)
+  // stockValueBefore: คำนวณจาก movements (ใช้สำหรับต้นงวดเดือนก่อนๆ)
   const stockValueBefore = (dateExclusive) => {
     let value = 0;
     movements.forEach((m) => {
@@ -11336,31 +11365,54 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     return value;
   };
 
-  // ฟังก์ชันคำนวณกำไรขาดทุนของเดือน/ปีใดๆ — ใช้ร่วมกันทั้งมุมมองรายเดือนและสรุปรายปี
+  // มูลค่าสต็อกจริงปัจจุบัน (ตรงกับหน้าแดชบอร์ด)
+  const currentStockValue = inventory.summary.reduce((s, x) => s + x.totalCost, 0);
+
   const computeMonthlyPL = (y, m) => {
     const sd = `${y}-${String(m).padStart(2,"0")}-01`;
-    const ed = `${y}-${String(m).padStart(2,"0")}-${String(new Date(y, m, 0).getDate()).padStart(2,"0")}`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const ed = `${y}-${String(m).padStart(2,"0")}-${String(lastDay).padStart(2,"0")}`;
+    const nextDay = new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10);
     const inR = (d) => d >= sd && d <= ed;
     const ym = `${y}-${String(m).padStart(2,"0")}`;
+    const todayStr = new Date().toISOString().slice(0, 10);
 
+    // รายได้
     const salesInR = sales.filter((s) => inR(s.date));
     const totalRev = salesInR.reduce((sum, inv) => {
       const subtotal = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
       const ad = subtotal - (inv.discount || 0);
       return sum + ad;
     }, 0);
-    const otherIncome = 0;
-    const income = totalRev + otherIncome;
 
-    const beginInv = stockValueBefore(sd);
-    const endInv = stockValueBefore(new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10));
+    // ซื้อในงวด
     const purchInR = movements
       .filter((mv) => mv.type === "in" && !mv.isOpening && inR(mv.date))
       .reduce((s, mv) => s + (Number(mv.qty) || 0) * (Number(mv.price) || 0), 0);
-    const available = beginInv + purchInR;
-    const cost = available - endInv;
-    const gross = income - cost;
 
+    // ต้นทุนขาย = costConsumed จากใบเบิกในงวด
+    const cogsInR = movements
+      .filter((mv) => mv.type === "withdraw" && inR(mv.date))
+      .reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
+
+    // ปลายงวด: ถ้าเป็นเดือนปัจจุบัน ใช้ inventory.summary (ตรงกับแดชบอร์ด)
+    //          ถ้าเป็นเดือนก่อน คำนวณจาก movements
+    const isCurrentMonth = nextDay > todayStr;
+    const endInv = isCurrentMonth
+      ? currentStockValue
+      : stockValueBefore(nextDay);
+
+    // ต้นงวด = ปลายงวด + ต้นทุนขาย - ซื้อ (สมดุลเสมอ)
+    const beginInv = isCurrentMonth
+      ? endInv + cogsInR - purchInR
+      : stockValueBefore(sd);
+
+    const available = beginInv + purchInR;
+    const cost = cogsInR;
+
+    const gross = totalRev - cost;
+
+    // ค่าใช้จ่าย
     const expensesInR = expenses.filter((e) => inR(e.billDate || e.date));
     const openingRows = [];
     Object.entries(expenseCategories || {}).forEach(([main, subs]) => {
@@ -11382,15 +11434,24 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     const byCategory = Object.entries(groups).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
     const totalExp = byCategory.reduce((s, c) => s + c.amount, 0);
 
-    // รวมยอดยกมาเข้าใน function โดยตรง
+    // ยอดยกมา
     const ymMatches = !openingMonth || openingMonth === ym;
     const addRev = ymMatches ? (Number(openingRevenue) || 0) : 0;
     const addCost = ymMatches ? (Number(openingCost) || 0) : 0;
-    const totalIncomeWithOpening = income + addRev;
+    const totalIncomeWithOpening = totalRev + addRev;
     const totalCostWithOpening = cost + addCost;
     const grossWithOpening = totalIncomeWithOpening - totalCostWithOpening;
     const net = grossWithOpening - totalExp;
-    return { totalRevenue: totalRev, totalOtherIncome: otherIncome, totalIncome: totalIncomeWithOpening, beginningInventory: beginInv, endingInventory: endInv, purchasesInRange: purchInR, goodsAvailableForSale: available, totalCost: totalCostWithOpening, grossProfit: grossWithOpening, expenseByCategory: byCategory, totalExpenses: totalExp, netProfit: net, openingRevenueApplied: addRev, openingCostApplied: addCost };
+
+    return {
+      totalRevenue: totalRev, totalOtherIncome: 0, totalIncome: totalIncomeWithOpening,
+      beginningInventory: beginInv, endingInventory: endInv,
+      purchasesInRange: purchInR, goodsAvailableForSale: available,
+      totalCost: totalCostWithOpening, grossProfit: grossWithOpening,
+      expenseByCategory: byCategory, totalExpenses: totalExp, netProfit: net,
+      openingRevenueApplied: addRev, openingCostApplied: addCost,
+      cogsFromWithdrawals: cogsInR,
+    };
   };
 
   const startDate = `${year}-${String(month).padStart(2,"0")}-01`;
@@ -11415,7 +11476,6 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     });
   }, [year, sales, expenses, expenseCategories, movements]);
   const yearlyNetProfitTotal = yearlyMonths.reduce((s, m) => s + m.netProfit, 0);
-  const yearlyNetProfitFinal = yearlyNetProfitTotal + openingProfit - landDebtReport - openingExpense;
 
   // ===== บันทึกจ่ายเงินปันผล (รายปี) =====
   const dividendPaymentsThisYear = (dividendPayments || []).filter((d) => (d.date || "").startsWith(String(year)));
@@ -11475,13 +11535,13 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
       <div style={{ display: "flex", gap: 8, marginBottom: 20, overflowX: "auto", overflowY: "hidden", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
         {[
           { key: "monthly", label: "รายเดือน" },
-          { key: "yearlyPL", label: "งบกำไรขาดทุนรายปี" },
+          { key: "yearly", label: "สรุปรายปี" },
         ].map((opt) => (
           <button key={opt.key} onClick={() => setReportView(opt.key)}
             style={{ padding: "8px 18px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid",
-              borderColor: reportView === opt.key ? "#2E8B45" : "#d1d5db",
-              background: reportView === opt.key ? "#E8F5EC" : "#fff",
-              color: reportView === opt.key ? "#1A5C2A" : "#6b7280" }}>
+              borderColor: reportView === opt.key ? "#2855A0" : "#d1d5db",
+              background: reportView === opt.key ? "#E8EEF8" : "#fff",
+              color: reportView === opt.key ? "#1B3A6B" : "#6b7280" }}>
             {opt.label}
           </button>
         ))}
@@ -11501,17 +11561,17 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
       <div id="monthly-report-content">
         {/* Summary cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
-          <div style={{ background: "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-            <div style={{ fontSize: 12, color: "#1A5C2A", marginBottom: 4 }}>รวมรายได้</div>
-            <div style={{ fontWeight: 700, fontSize: 20, color: "#1A5C2A" }}>฿{fmt(totalIncome)}</div>
+          <div style={{ background: "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+            <div style={{ fontSize: 12, color: "#1B3A6B", marginBottom: 4 }}>รวมรายได้</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#1B3A6B" }}>฿{fmt(totalIncome)}</div>
           </div>
-          <div style={{ background: "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-            <div style={{ fontSize: 12, color: "#1A6B35", marginBottom: 4 }}>ต้นทุนขาย + ค่าใช้จ่าย</div>
-            <div style={{ fontWeight: 700, fontSize: 20, color: "#1A6B35" }}>฿{fmt(totalCost + totalExpenses)}</div>
+          <div style={{ background: "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+            <div style={{ fontSize: 12, color: "#1E4D8C", marginBottom: 4 }}>ต้นทุนขาย + ค่าใช้จ่าย</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#1E4D8C" }}>฿{fmt(totalCost + totalExpenses)}</div>
           </div>
-          <div style={{ background: netProfit >= 0 ? "#e6f1fb" : "#E8F5EC", borderRadius: 12, padding: "14px 18px" }}>
-            <div style={{ fontSize: 12, color: netProfit >= 0 ? "#185fa5" : "#1A5C2A", marginBottom: 4 }}>กำไรสุทธิ</div>
-            <div style={{ fontWeight: 700, fontSize: 20, color: netProfit >= 0 ? "#185fa5" : "#1A5C2A" }}>฿{fmt(netProfit)}</div>
+          <div style={{ background: netProfit >= 0 ? "#e6f1fb" : "#E8EEF8", borderRadius: 12, padding: "14px 18px" }}>
+            <div style={{ fontSize: 12, color: netProfit >= 0 ? "#185fa5" : "#1B3A6B", marginBottom: 4 }}>กำไรสุทธิ</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: netProfit >= 0 ? "#185fa5" : "#1B3A6B" }}>฿{fmt(netProfit)}</div>
           </div>
           <div style={{ background: "#eeedfe", borderRadius: 12, padding: "14px 18px" }}>
             <div style={{ fontSize: 12, color: "#3c3489", marginBottom: 4 }}>อัตรากำไรสุทธิ</div>
@@ -11525,17 +11585,20 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
           <Row label="รายได้จากการขาย" value={`฿${fmt(totalRevenue)}`} />
           <Row label="รายได้อื่น" value={`฿${fmt(totalOtherIncome)}`} />
-          {openingApplies && Number(openingRevenue) > 0 && <Row label={`รายได้ยกมา${openingMonth ? " (" + openingMonth + ")" : ""}`} value={`+฿${fmt(Number(openingRevenue))}`} color="#1A5C2A" />}
+          {openingApplies && Number(openingRevenue) > 0 && <Row label={`รายได้ยกมา${openingMonth ? " (" + openingMonth + ")" : ""}`} value={`+฿${fmt(Number(openingRevenue))}`} color="#1B3A6B" />}
           <div style={{ borderTop: "1px solid #e5e7eb", margin: "8px 0" }} />
           <Row label="รวมรายได้" value={`฿${fmt(totalIncome)}`} bold />
 
           <div style={{ marginTop: 16, marginBottom: 4, fontWeight: 600, fontSize: 13, color: "#6b7280" }}>ต้นทุนขาย:</div>
           <Row label="　สินค้าคงเหลือยกมาต้นงวด" value={`฿${fmt(beginningInventory)}`} />
           <Row label="　บวก ซื้อสินค้า" value={`+฿${fmt(purchasesInRange)}`} />
-          {openingApplies && Number(openingCost) > 0 && <Row label={`　ต้นทุนยกมา${openingMonth ? " (" + openingMonth + ")" : ""}`} value={`+฿${fmt(Number(openingCost))}`} color="#1A5C2A" />}
+          {openingApplies && Number(openingCost) > 0 && <Row label={`　ต้นทุนยกมา${openingMonth ? " (" + openingMonth + ")" : ""}`} value={`+฿${fmt(Number(openingCost))}`} color="#1B3A6B" />}
           <div style={{ borderTop: "1px solid #e5e7eb", margin: "6px 0 6px 16px" }} />
           <Row label="　สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(goodsAvailableForSale)}`} />
           <Row label="　หัก สินค้าคงเหลือปลายงวด" value={`-฿${fmt(endingInventory)}`} />
+          <div style={{ fontSize: 11, color: "#9ca3af", marginLeft: 16, marginBottom: 4 }}>
+            (ต้นทุนขายจริงคำนวณจาก costConsumed FIFO ของใบเบิกในงวด = ฿{fmt(currentMonthPL.cogsFromWithdrawals)})
+          </div>
           <div style={{ borderTop: "1px solid #e5e7eb", margin: "6px 0 6px 16px" }} />
           <Row label="　ต้นทุนขาย" value={`฿${fmt(totalCost)}`} bold />
 
@@ -11548,8 +11611,8 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
           ))}
           {expenseByCategory.length === 0 && <Row label="　ไม่มีค่าใช้จ่าย" value="฿0" />}
           <Row label="รวมค่าใช้จ่าย" value={`-฿${fmt(totalExpenses)}`} />
-          <div style={{ borderTop: "2px solid #0D3D1A", margin: "8px 0" }} />
-          <Row label="กำไรสุทธิ (Net Profit)" value={`฿${fmt(netProfit)}`} bold color={netProfit >= 0 ? "#1A5C2A" : "#1A6B35"} />
+          <div style={{ borderTop: "2px solid #0F2548", margin: "8px 0" }} />
+          <Row label="กำไรสุทธิ (Net Profit)" value={`฿${fmt(netProfit)}`} bold color={netProfit >= 0 ? "#1B3A6B" : "#1E4D8C"} />
         </div>
 
         {/* Dividend Calculation */}
@@ -11563,7 +11626,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
           <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: 14 }}>
             <Row label="กำไรสุทธิที่นำมาคำนวณปันผล" value={`฿${fmt(dividendPool)}`} bold />
-            {netProfit < 0 && <p style={{ fontSize: 12, color: "#1A6B35", margin: "6px 0 0" }}>* เดือนนี้ขาดทุน ไม่มีเงินปันผล</p>}
+            {netProfit < 0 && <p style={{ fontSize: 12, color: "#1E4D8C", margin: "6px 0 0" }}>* เดือนนี้ขาดทุน ไม่มีเงินปันผล</p>}
           </div>
 
           {editingShareholders && (
@@ -11597,7 +11660,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
                         <input type="number" style={{ ...inputStyle, textAlign: "right", width: 90 }} value={sh.percent} onChange={(e) => updateShareholder(idx, "percent", e.target.value)} />
                       ) : `${sh.percent}%`}
                     </td>
-                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>฿{fmt(amount)}</td>
+                    <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>฿{fmt(amount)}</td>
                     {editingShareholders && (
                       <td style={{ ...tdStyle, textAlign: "right" }}>
                         <button style={btnDanger} onClick={() => confirmAction(`ต้องการลบผู้ถือหุ้น "${sh.name}" ใช่หรือไม่?`, () => removeShareholder(idx))}><Trash2 size={14} /></button>
@@ -11610,7 +11673,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
             <tfoot>
               <tr>
                 <td style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: totalSharePercent === 100 ? "#1A5C2A" : "#1A6B35" }}>{totalSharePercent}%</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: totalSharePercent === 100 ? "#1B3A6B" : "#1E4D8C" }}>{totalSharePercent}%</td>
                 <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(dividendPool)}</td>
                 {editingShareholders && <td style={tdStyle}></td>}
               </tr>
@@ -11618,173 +11681,33 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
           </table>
           </div>
           {totalSharePercent !== 100 && (
-            <p style={{ fontSize: 12, color: "#1A6B35", marginTop: 8 }}>⚠️ สัดส่วนหุ้นรวมต้องเท่ากับ 100% (ปัจจุบัน {totalSharePercent}%)</p>
+            <p style={{ fontSize: 12, color: "#1E4D8C", marginTop: 8 }}>⚠️ สัดส่วนหุ้นรวมต้องเท่ากับ 100% (ปัจจุบัน {totalSharePercent}%)</p>
           )}
         </div>
       </div>
       </>
       )}
 
-      {reportView === "yearlyPL" && (() => {
-        // คำนวณงบกำไรขาดทุนทั้งปี (เหมือนรายเดือนแต่ครอบทั้งปี)
-        const sd = `${year}-01-01`;
-        const ed = `${year}-12-31`;
-        const inR = (d) => d >= sd && d <= ed;
-
-        const salesInR = sales.filter(s => inR(s.date));
-        const totalRevY = salesInR.reduce((sum, inv) => {
-          const sub = inv.items.reduce((s, it) => s + (it.net || 0) * (it.price || 0), 0);
-          return sum + sub - (inv.discount || 0);
-        }, 0);
-
-        const beginInvY = stockValueBefore(sd);
-        const endInvY = stockValueBefore(new Date(new Date(ed).getTime() + 86400000).toISOString().slice(0, 10));
-        const purchInRY = movements.filter(mv => mv.type === "in" && !mv.isOpening && inR(mv.date))
-          .reduce((s, mv) => s + (Number(mv.qty) || 0) * (Number(mv.price) || 0), 0);
-        const purchInRYTotal = purchInRY + openingPurchase; // รวมซื้อยกมา (ไม่รวมต้นทุนยกมา)
-        const availableY = beginInvY + purchInRYTotal;
-        const costY = (availableY - endInvY) + openingCost; // ต้นทุนขาย + ต้นทุนยกมา
-
-        const expensesInRY = expenses.filter(e => inR(e.billDate || e.date));
-        const groupsY = {};
-        expensesInRY.forEach(e => {
-          const items = (e.items && e.items.length > 0) ? e.items : [{ mainCategory: e.mainCategory || e.category || "ไม่ระบุ", amount: e.amount }];
-          items.filter(it => it.mainCategory === "ค่าใช้จ่าย").forEach(it => {
-            groupsY["ค่าใช้จ่าย"] = (groupsY["ค่าใช้จ่าย"] || 0) + (Number(it.amount) || 0);
-          });
-        });
-        const byCategoryY = Object.entries(groupsY).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
-        const totalExpY = byCategoryY.reduce((s, c) => s + c.amount, 0);
-
-        // รวมยอดยกมา
-        const totalIncomeY = totalRevY + openingRevenue;
-        const totalCostY = costY; // costY รวม openingCost ไว้แล้ว
-        const totalExpWithOpening = totalExpY + openingExpense;
-        const grossProfitY = totalIncomeY - totalCostY;
-        const netProfitY = grossProfitY - totalExpWithOpening;
-        const netProfitFinalY = netProfitY + openingProfit - landDebtReport;
-        const profitMarginY = totalIncomeY > 0 ? (netProfitY / totalIncomeY) * 100 : 0;
-
-        const Row = ({ label, value, bold, color, indent }) => (
-          <div style={{ display: "flex", justifyContent: "space-between", padding: `${bold ? 10 : 7}px ${indent ? "32px" : "0"} ${bold ? 10 : 7}px 0`, borderBottom: bold ? "2px solid #e5e7eb" : "1px solid #f3f4f6" }}>
-            <span style={{ fontSize: bold ? 16 : 15, fontWeight: bold ? 700 : 400, color: color || "#374151" }}>{label}</span>
-            <span style={{ fontSize: bold ? 16 : 15, fontWeight: bold ? 700 : 600, color: color || "#374151" }}>{value}</span>
-          </div>
-        );
-
-        return (
-          <>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <select style={{ ...inputStyle, width: 100 }} value={year} onChange={e => setYear(Number(e.target.value))}>
-              {yearOptions.map(y => <option key={y} value={y}>ปี {y}</option>)}
-            </select>
-          </div>
-
-          {/* summary cards */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 20 }}>
-            {[
-              { label: "รวมรายได้", value: `฿${fmt(totalIncomeY)}`, color: "#185fa5", bg: "#e6f1fb" },
-              { label: "ต้นทุนขาย + ค่าใช้จ่าย", value: `฿${fmt(totalCostY + totalExpWithOpening)}`, color: "#1A5C2A", bg: "#E8F5EC" },
-              { label: "กำไรสุทธิ", value: `฿${fmt(netProfitY)}`, color: netProfitY >= 0 ? "#185fa5" : "#991b1b", bg: netProfitY >= 0 ? "#e6f1fb" : "#fff1f2" },
-              { label: "กำไรสุทธิรวมยกมา", value: netProfitFinalY < 0 ? `(฿${fmt(Math.abs(netProfitFinalY))})` : `฿${fmt(netProfitFinalY)}`, color: netProfitFinalY >= 0 ? "#166534" : "#991b1b", bg: netProfitFinalY >= 0 ? "#f0fdf4" : "#fff1f2", bold: true },
-              { label: "อัตรากำไรสุทธิ", value: `${profitMarginY.toFixed(1)}%`, color: profitMarginY >= 0 ? "#6d28d9" : "#991b1b", bg: "#f5f3ff" },
-            ].map((c, i) => (
-              <div key={i} style={{ background: c.bg, borderRadius: 12, padding: "14px 16px", border: c.bold ? "2px solid #86efac" : "none" }}>
-                <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>{c.label}</div>
-                <div style={{ fontWeight: c.bold ? 800 : 700, fontSize: c.bold ? 20 : 18, color: c.color }}>{c.value}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* งบกำไรขาดทุน */}
-          <div id="yearly-pl-content" style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "24px 28px" }}>
-            <h3 style={{ margin: "0 0 20px", fontSize: 17, fontWeight: 700 }}>งบกำไรขาดทุน — ปี {year}</h3>
-
-            <Row label="รายได้จากการขาย" value={`฿${fmt(totalIncomeY)}`} />
-            <Row label="รวมรายได้" value={`฿${fmt(totalIncomeY)}`} bold color="#111827" />
-
-            <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>ต้นทุนขาย:</div>
-            <Row label="สินค้าคงเหลือยกมาต้นงวด" value={`฿${fmt(beginInvY)}`} indent />
-            <Row label="บวก ซื้อสินค้า" value={`+฿${fmt(purchInRYTotal)}`} indent />
-            <Row label="สินค้าที่มีไว้เพื่อขาย" value={`฿${fmt(availableY)}`} indent />
-            <Row label="หัก สินค้าคงเหลือปลายงวด" value={`-฿${fmt(endInvY)}`} indent />
-            {openingCost > 0 && <Row label="บวก ต้นทุนยกมา" value={`+฿${fmt(openingCost)}`} indent />}
-            <Row label="ต้นทุนขาย" value={`฿${fmt(totalCostY)}`} bold color="#111827" />
-
-            <div style={{ marginTop: 16, marginBottom: 8 }}>
-              <Row label="กำไรขั้นต้น (Gross Profit)" value={`฿${fmt(grossProfitY)}`} bold color={grossProfitY >= 0 ? "#185fa5" : "#991b1b"} />
-            </div>
-
-            <div style={{ marginTop: 8, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>หัก ค่าใช้จ่าย:</div>
-            <Row label="ค่าใช้จ่าย" value={`-฿${fmt(totalExpWithOpening)}`} indent />
-            <Row label="รวมค่าใช้จ่าย" value={`-฿${fmt(totalExpWithOpening)}`} bold color="#111827" />
-
-            <div style={{ marginTop: 16 }}>
-              <Row label="กำไรสุทธิ (Net Profit)" value={netProfitY < 0 ? `฿${fmt(netProfitY)}` : `฿${fmt(netProfitY)}`} bold color={netProfitY >= 0 ? "#185fa5" : "#991b1b"} />
-            </div>
-
-            {(openingProfit !== 0 || landDebtReport !== 0) && (
-              <>
-                <div style={{ marginTop: 16, marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#374151" }}>รายการพิเศษ / ยกมา:</div>
-                {openingProfit !== 0 && <Row label="กำไร/ขาดทุนยกมา" value={`${openingProfit >= 0 ? "+" : ""}฿${fmt(openingProfit)}`} color={openingProfit >= 0 ? "#166534" : "#991b1b"} indent />}
-                {landDebtReport !== 0 && <Row label="มูลค่าลงทุนที่ดิน (หักออก)" value={`-฿${fmt(landDebtReport)}`} color="#991b1b" indent />}
-                <div style={{ marginTop: 8 }}>
-                  <Row label="กำไร/ขาดทุนสุทธิ (รวมยกมา)" value={netProfitFinalY < 0 ? `(฿${fmt(Math.abs(netProfitFinalY))})` : `฿${fmt(netProfitFinalY)}`} bold color={netProfitFinalY >= 0 ? "#166534" : "#991b1b"} />
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* ช่องกรอกยอดยกมา */}
-          <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginTop: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: "#92400e", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px 16px" }}>
-              {[
-                { label: "เดือนที่มีผล (ยอดยกมา)", type: "month", value: openingMonth, setter: setOpeningMonth },
-                { label: "รายได้ยกมา (บาท)", value: openingRevenue || "", setter: setOpeningRevenue },
-                { label: "ต้นทุนยกมา (บาท)", value: openingCost || "", setter: setOpeningCost },
-                { label: "ยอดซื้อยกมา (บาท)", value: openingPurchase || "", setter: setOpeningPurchase },
-                { label: "ค่าใช้จ่ายยกมา (บาท)", value: openingExpense || "", setter: setOpeningExpense },
-                { label: "กำไร/ขาดทุนยกมา (บาท)", value: openingProfit || "", setter: setOpeningProfit, hint: "บวก=กำไร ลบ=ขาดทุน" },
-                { label: "มูลค่าลงทุนที่ดิน — หักออก (บาท)", value: landDebtReport || "", setter: setLandDebtReport },
-              ].map((f, i) => (
-                <div key={i}>
-                  <label style={{ display: "block", fontSize: 12, color: "#374151", marginBottom: 4 }}>{f.label} {f.hint && <span style={{ fontSize: 10, color: "#6b7280" }}>({f.hint})</span>}</label>
-                  <input type={f.type || "number"} style={{ ...inputStyle, textAlign: f.type === "month" ? "left" : "right" }} value={f.value} onChange={e => f.setter(e.target.value)} placeholder="0" />
-                </div>
-              ))}
-            </div>
-          </div>
-          </>
-        );
-      })()}
-
       {reportView === "yearly" && (
       <>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
         <select style={{ ...inputStyle, width: 100 }} value={year} onChange={(e) => setYear(Number(e.target.value))}>
           {yearOptions.map((y) => <option key={y} value={y}>ปี {y}</option>)}
         </select>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
-        <div style={{ background: yearlyNetProfitTotal >= 0 ? "#e6f1fb" : "#fff1f2", borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไรสุทธิในระบบ ปี {year}</div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#991b1b" }}>฿{fmt(yearlyNetProfitTotal)}</div>
-        </div>
-        <div style={{ background: yearlyNetProfitFinal >= 0 ? "#f0fdf4" : "#fff1f2", borderRadius: 12, padding: "16px 18px", border: `2px solid ${yearlyNetProfitFinal >= 0 ? "#86efac" : "#fca5a5"}` }}>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไร/ขาดทุนสุทธิรวมยกมา</div>
-          <div style={{ fontWeight: 800, fontSize: 20, color: yearlyNetProfitFinal >= 0 ? "#166534" : "#991b1b" }}>
-            {yearlyNetProfitFinal < 0 ? `(฿${fmt(Math.abs(yearlyNetProfitFinal))})` : `฿${fmt(yearlyNetProfitFinal)}`}
-          </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
+        <div style={{ background: yearlyNetProfitTotal >= 0 ? "#e6f1fb" : "#E8EEF8", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 12, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#1B3A6B", marginBottom: 4 }}>กำไรสุทธิรวมทั้งปี {year}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: yearlyNetProfitTotal >= 0 ? "#185fa5" : "#1B3A6B" }}>฿{fmt(yearlyNetProfitTotal)}</div>
         </div>
         <div style={{ background: "#eeedfe", borderRadius: 12, padding: "16px 18px" }}>
           <div style={{ fontSize: 12, color: "#3c3489", marginBottom: 4 }}>จ่ายเงินปันผลไปแล้วในปีนี้</div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: "#3c3489" }}>฿{fmt(totalDividendPaidThisYear)}</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: "#3c3489" }}>฿{fmt(totalDividendPaidThisYear)}</div>
         </div>
-        <div style={{ background: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#e3f5ea" : "#fff1f2", borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4 }}>กำไร - เงินปันผล</div>
-          <div style={{ fontWeight: 700, fontSize: 20, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1A5C2A" : "#991b1b" }}>฿{fmt(yearlyNetProfitTotal - totalDividendPaidThisYear)}</div>
+        <div style={{ background: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#e3f5ea" : "#E8EEF8", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 12, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1B3A6B" : "#1B3A6B", marginBottom: 4 }}>กำไร - เงินปันผล</div>
+          <div style={{ fontWeight: 700, fontSize: 22, color: (yearlyNetProfitTotal - totalDividendPaidThisYear) >= 0 ? "#1B3A6B" : "#1B3A6B" }}>฿{fmt(yearlyNetProfitTotal - totalDividendPaidThisYear)}</div>
         </div>
       </div>
 
@@ -11808,7 +11731,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(m.totalIncome)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(m.totalCost)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>฿{fmt(m.totalExpenses)}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: m.netProfit >= 0 ? "#1A5C2A" : "#1A6B35" }}>฿{fmt(m.netProfit)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: m.netProfit >= 0 ? "#1B3A6B" : "#1E4D8C" }}>฿{fmt(m.netProfit)}</td>
               </tr>
             ))}
           </tbody>
@@ -11818,7 +11741,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
               <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(yearlyMonths.reduce((s,m)=>s+m.totalIncome,0))}</td>
               <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(yearlyMonths.reduce((s,m)=>s+m.totalCost,0))}</td>
               <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>฿{fmt(yearlyMonths.reduce((s,m)=>s+m.totalExpenses,0))}</td>
-              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: yearlyNetProfitTotal >= 0 ? "#1A5C2A" : "#1A6B35" }}>฿{fmt(yearlyNetProfitTotal)}</td>
+              <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: yearlyNetProfitTotal >= 0 ? "#1B3A6B" : "#1E4D8C" }}>฿{fmt(yearlyNetProfitTotal)}</td>
             </tr>
           </tfoot>
         </table>
@@ -11844,7 +11767,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
             {dividendPaymentsThisYear.sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((d) => (
               <tr key={d.id}>
                 <td style={tdStyle}>{d.date}</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1A5C2A" }}>฿{fmt(d.amount)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600, color: "#1B3A6B" }}>฿{fmt(d.amount)}</td>
                 <td style={{ ...tdStyle, textAlign: "right" }}>
                   <button style={btnDanger} onClick={() => confirmAction(`ต้องการลบรายการจ่ายเงินปันผลวันที่ ${d.date} จำนวน ฿${fmt(d.amount)} ใช่หรือไม่?`, () => removeDivPayment(d.id))}><Trash2 size={14} /> ลบ</button>
                 </td>
@@ -11858,7 +11781,7 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
             <tfoot>
               <tr>
                 <td style={{ ...tdStyle, fontWeight: 700 }}>รวม</td>
-                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A5C2A" }}>฿{fmt(totalDividendPaidThisYear)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1B3A6B" }}>฿{fmt(totalDividendPaidThisYear)}</td>
                 <td style={tdStyle}></td>
               </tr>
             </tfoot>
@@ -11868,45 +11791,22 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
 
         {/* ยอดยกมาก่อนเริ่มใช้แอพ */}
         <div style={{ background: "#fffbeb", borderRadius: 12, border: "1px solid #fde68a", padding: "16px 20px", marginTop: 16 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, color: "#1A5C2A", marginBottom: 12 }}>ยอดยกมา / รายการพิเศษ</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px 16px" }}>
+          <div style={{ fontWeight: 600, fontSize: 14, color: "#1B3A6B", marginBottom: 12 }}>ยอดยกมาก่อนเริ่มใช้แอพ (ถ้ามี)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 16px" }}>
             <div>
-              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล (ยอดยกมา)</label>
+              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>เดือนที่มีผล</label>
               <input type="month" style={inputStyle} value={openingMonth} onChange={(e) => setOpeningMonth(e.target.value)} />
             </div>
             <div>
               <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>รายได้ยกมา (บาท)</label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue || ""} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingRevenue} onChange={(e) => setOpeningRevenue(e.target.value)} placeholder="0" />
             </div>
             <div>
               <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>ต้นทุนยกมา (บาท)</label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost || ""} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>กำไร/ขาดทุนยกมา (บาท) <span style={{ fontSize: 11, color: "#6b7280" }}>บวก=กำไรยกมา, ลบ=ขาดทุนยกมา</span></label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingProfit || ""} onChange={(e) => setOpeningProfit(e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 13, color: "#374151", marginBottom: 4 }}>มูลค่าลงทุนที่ดิน — หักออก (บาท)</label>
-              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={landDebtReport || ""} onChange={(e) => setLandDebtReport(e.target.value)} placeholder="0" />
+              <input type="number" style={{ ...inputStyle, textAlign: "right" }} value={openingCost} onChange={(e) => setOpeningCost(e.target.value)} placeholder="0" />
             </div>
           </div>
-          <p style={{ fontSize: 12, color: "#1A5C2A", margin: "8px 0 0" }}>* บันทึกถาวรอัตโนมัติ ใช้ได้ทุกเครื่อง</p>
-
-          {/* สรุปกำไรสุทธิรายปีรวมยกมา */}
-          {(openingProfit !== 0 || landDebtReport !== 0) && (
-            <div style={{ marginTop: 16, padding: "12px 16px", background: yearlyNetProfitFinal >= 0 ? "#f0fdf4" : "#fff1f2", borderRadius: 8, border: `1px solid ${yearlyNetProfitFinal >= 0 ? "#86efac" : "#fca5a5"}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>กำไร/ขาดทุนสุทธิรายปี (รวมยกมา)</div>
-                  <div style={{ fontSize: 11, color: "#6b7280" }}>กำไรในระบบ {fmt(yearlyNetProfitTotal)} + ยกมา {fmt(openingProfit)} − ที่ดิน {fmt(landDebtReport)}</div>
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 900, color: yearlyNetProfitFinal >= 0 ? "#166534" : "#991b1b" }}>
-                  {yearlyNetProfitFinal < 0 ? `(฿${fmt(Math.abs(yearlyNetProfitFinal))})` : `฿${fmt(yearlyNetProfitFinal)}`}
-                </div>
-              </div>
-            </div>
-          )}
+          <p style={{ fontSize: 12, color: "#1B3A6B", margin: "8px 0 0" }}>* ยอดยกมาจะรวมเข้างบเฉพาะเดือนที่กำหนด — ถ้าไม่กำหนดเดือนจะรวมทุกเดือน — บันทึกถาวรอัตโนมัติ ใช้ได้ทุกเครื่อง</p>
         </div>
 
         {divPayForm && (
