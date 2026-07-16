@@ -1927,6 +1927,7 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [users, setUsers] = useState([
     { id: "U001", username: "Ttm", password: "8526", name: "ผู้ดูแลระบบ", role: "admin" },
+    { id: "U002", username: "wpn", password: "0144", name: "ผู้ดูแลระบบ", role: "admin" },
   ]);
   const [currentUser, setCurrentUser] = useState(null);
   const [tab, setTab] = useState("dashboard");
