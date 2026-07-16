@@ -217,7 +217,8 @@ export function useSupabaseSync(key, value, setValue, loaded) {
 
     return () => {
       clearTimeout(saveTimer.current)
-      clearTimeout(maxWaitTimer.current)
+      // หมายเหตุ: ไม่ clear maxWaitTimer ตรงนี้ — ต้องปล่อยให้มันทำงานต่อแม้ค่าจะเปลี่ยนถี่ๆ
+      // (เป็น safety-net ให้เซฟภายใน 6 วิ แม้ debounce 2 วิจะถูกรีเซ็ตซ้ำๆ ก็ตาม)
     }
   }, [key, value, loaded])
 
