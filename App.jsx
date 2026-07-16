@@ -2819,27 +2819,16 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   ))}
                   {purchaseByProduct.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
-                {purchaseByProduct.length > 0 && (() => {
-                  // รวมจำนวนแยกตามหน่วย (เผื่อสินค้าคนละหน่วยกัน เช่น กก. / ชิ้น)
-                  const qtyByUnit = {};
-                  purchaseByProduct.forEach((g) => {
-                    const unit = prodUnit(g.productId) || "หน่วย";
-                    qtyByUnit[unit] = (qtyByUnit[unit] || 0) + g.qty;
-                  });
-                  const qtyTotalText = Object.entries(qtyByUnit)
-                    .map(([unit, qty]) => `${fmt(qty)} ${unit}`)
-                    .join(" + ");
-                  return (
-                    <tfoot>
-                      <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
-                        <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{qtyTotalText}</td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(purchaseByProduct.reduce((s, g) => s + g.value, 0))}</td>
-                      </tr>
-                    </tfoot>
-                  );
-                })()}
+                {purchaseByProduct.length > 0 && (
+                  <tfoot>
+                    <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(purchaseByProduct.reduce((s, g) => s + g.qty, 0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1A6B35" }}>฿{fmt(purchaseByProduct.reduce((s, g) => s + g.value, 0))}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
               </div>{/* end dash-box-purchase-by-product */}
             </div>{/* end by-product card */}
@@ -2988,27 +2977,16 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   ))}
                   {salesByProduct.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
-                {salesByProduct.length > 0 && (() => {
-                  // รวมจำนวนแยกตามหน่วย (เผื่อสินค้าคนละหน่วยกัน เช่น กก. / ชิ้น)
-                  const qtyByUnit = {};
-                  salesByProduct.forEach((g) => {
-                    const unit = prodUnit(g.productId) || "หน่วย";
-                    qtyByUnit[unit] = (qtyByUnit[unit] || 0) + g.qty;
-                  });
-                  const qtyTotalText = Object.entries(qtyByUnit)
-                    .map(([unit, qty]) => `${fmt(qty)} ${unit}`)
-                    .join(" + ");
-                  return (
-                    <tfoot>
-                      <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
-                        <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{qtyTotalText}</td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByProduct.reduce((s, g) => s + g.value, 0))}</td>
-                      </tr>
-                    </tfoot>
-                  );
-                })()}
+                {salesByProduct.length > 0 && (
+                  <tfoot>
+                    <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(salesByProduct.reduce((s, g) => s + g.qty, 0))}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByProduct.reduce((s, g) => s + g.value, 0))}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
               </div>
             </div>
