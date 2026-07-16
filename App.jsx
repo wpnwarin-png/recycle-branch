@@ -950,33 +950,20 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
       let costConsumed = 0;
 
       if (ev.costStored != null && ev.costStored > 0) {
-        // ใช้มูลค่าที่บันทึกไว้ตอนสร้างใบเบิก
-        costConsumed = ev.costStored;
-        // ตัด lots ตาม FIFO qty แต่ปรับ unitCost ให้ costConsumed รวมตรงกับ costStored
+        // ตัด lots ตาม FIFO qty จริง — คงราคาแต่ละ lot ไว้ ไม่กระจาย avgCost
         const queue = lots[ev.productId] || [];
-        const totalAvailCost = queue.reduce((s, l) => s + Math.max(0, l.qtyRemaining) * l.unitCost, 0);
         let qtyLeft = ev.qty;
         for (let i = 0; i < queue.length && qtyLeft > 0; i++) {
           const lot = queue[i];
           if (lot.qtyRemaining <= 0) continue;
           const take = Math.min(lot.qtyRemaining, qtyLeft);
-          // ปรับ proportion ให้ costConsumed รวม = costStored
-          if (totalAvailCost > 0) {
-            const proportion = (take * lot.unitCost) / totalAvailCost;
-            // ไม่แก้ unitCost เพื่อรักษา avgCost ของ lot — แค่ตัด qty
-          }
+          costConsumed += take * lot.unitCost;
           lot.qtyRemaining -= take;
           qtyLeft -= take;
         }
-        // ปรับมูลค่า lots ที่เหลือให้ตรงกับ (totalAvailCost - ev.costStored)
-        const remainingCost = totalAvailCost - ev.costStored;
-        const remainingQty = (lots[ev.productId] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
-        if (remainingQty > 0 && remainingCost >= 0) {
-          const newAvgUnit = remainingCost / remainingQty;
-          // กระจาย remainingCost ไปยัง lots ที่เหลือตาม qty
-          (lots[ev.productId] || []).forEach(l => {
-            if (l.qtyRemaining > 0) l.unitCost = newAvgUnit;
-          });
+        // ถ้า costStored ต่างจาก FIFO มาก ให้ใช้ costStored แทน (เพื่อ accuracy)
+        if (ev.costStored > 0 && Math.abs(costConsumed - ev.costStored) > 0.01) {
+          costConsumed = ev.costStored;
         }
       } else {
         // fallback: คำนวณ FIFO ปกติ
