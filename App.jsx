@@ -263,8 +263,9 @@ function buildBeautifulHtml(el, title, themeColor = "#1a2744") {
     if (firstTfoot) {
       const cells = firstTfoot.querySelectorAll("td");
       if (cells.length >= 2) {
-        // หายอดรวมมูลค่า (คอลัมน์ที่ 2 ถ้ามี 3+ คอลัมน์)
-        const valueCell = cells.length >= 3 ? cells[1] : cells[cells.length - 1];
+        // หายอดรวมมูลค่า: หาเซลล์ที่มีสัญลักษณ์ ฿ (คอลัมน์เงิน) แทนการเดาตำแหน่งคอลัมน์
+        let valueCell = Array.from(cells).find((c) => c.textContent.includes("฿"));
+        if (!valueCell) valueCell = cells[cells.length - 1];
         const totalValue = valueCell.textContent.trim();
         const summaryCard = document.createElement("div");
         summaryCard.style.cssText = "background:#fff;border-radius:8px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin-bottom:4px;";
@@ -2987,16 +2988,27 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
                   ))}
                   {salesByProduct.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, textAlign: "center", color: "#9ca3af" }}>ไม่มีข้อมูลในช่วงเวลานี้</td></tr>}
                 </tbody>
-                {salesByProduct.length > 0 && (
-                  <tfoot>
-                    <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByProduct.reduce((s, g) => s + g.value, 0))}</td>
-                    </tr>
-                  </tfoot>
-                )}
+                {salesByProduct.length > 0 && (() => {
+                  // รวมจำนวนแยกตามหน่วย (เผื่อสินค้าคนละหน่วยกัน เช่น กก. / ชิ้น)
+                  const qtyByUnit = {};
+                  salesByProduct.forEach((g) => {
+                    const unit = prodUnit(g.productId) || "หน่วย";
+                    qtyByUnit[unit] = (qtyByUnit[unit] || 0) + g.qty;
+                  });
+                  const qtyTotalText = Object.entries(qtyByUnit)
+                    .map(([unit, qty]) => `${fmt(qty)} ${unit}`)
+                    .join(" + ");
+                  return (
+                    <tfoot>
+                      <tr style={{ background: "#f3f4f6", borderTop: "2px solid #e5e7eb" }}>
+                        <td style={{ ...tdStyle, fontWeight: 700 }}>รวมทั้งหมด</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{qtyTotalText}</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>—</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#185fa5" }}>฿{fmt(salesByProduct.reduce((s, g) => s + g.value, 0))}</td>
+                      </tr>
+                    </tfoot>
+                  );
+                })()}
               </table>
               </div>
             </div>
@@ -6930,11 +6942,17 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
         if (updatedC) saveToSupabase('customers', [updatedC]);
       }
     } else if (payModal.kind === "purchase") {
-      setPurchases(purchases.map((po) => po.id === realId ? { ...po, payments: [...(po.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : po));
+      const updatedItem = { ...(purchases.find(po => po.id === realId) || {}), payments: [...(purchases.find(po => po.id === realId)?.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts };
+      setPurchases(prev => prev.map((po) => po.id === realId ? updatedItem : po));
+      saveToSupabase("purchases", [updatedItem]);
     } else if (payModal.kind === "expense") {
-      setExpenses(expenses.map((e) => e.id === realId ? { ...e, payments: [...(e.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : e));
+      const updatedItem = { ...(expenses.find(e => e.id === realId) || {}), payments: [...(expenses.find(e => e.id === realId)?.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts };
+      setExpenses(prev => prev.map((e) => e.id === realId ? updatedItem : e));
+      saveToSupabase("expenses", [updatedItem]);
     } else {
-      setSales(sales.map((inv) => inv.id === realId ? { ...inv, payments: [...(inv.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts } : inv));
+      const updatedItem = { ...(sales.find(inv => inv.id === realId) || {}), payments: [...(sales.find(inv => inv.id === realId)?.payments || []), ...cleaned], writeOff: writeOffChecked, updated_at: ts };
+      setSales(prev => prev.map((inv) => inv.id === realId ? updatedItem : inv));
+      saveToSupabase("sales", [updatedItem]);
     }
     setPayModal(null);
     setPayRows(null);
@@ -6960,26 +6978,26 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const cleaned = { ...editPaymentForm, amount: Number(editPaymentForm.amount) || 0 };
     const realId = historyModal.doc?.id ?? historyModal.id;
     if (historyModal.kind === "purchase") {
-      setPurchases(purchases.map((po) => {
-        if (po.id !== realId) return po;
-        const newPayments = [...(po.payments || [])];
-        newPayments[editingPaymentIdx] = cleaned;
-        return { ...po, payments: newPayments };
-      }));
+      const po = purchases.find((p) => p.id === realId);
+      const newPayments = [...(po?.payments || [])];
+      newPayments[editingPaymentIdx] = cleaned;
+      const updatedItem = { ...po, payments: newPayments };
+      setPurchases(prev => prev.map((p) => p.id === realId ? updatedItem : p));
+      saveToSupabase("purchases", [updatedItem]);
     } else if (historyModal.kind === "expense") {
-      setExpenses(expenses.map((e) => {
-        if (e.id !== realId) return e;
-        const newPayments = [...(e.payments || [])];
-        newPayments[editingPaymentIdx] = cleaned;
-        return { ...e, payments: newPayments };
-      }));
+      const e = expenses.find((x) => x.id === realId);
+      const newPayments = [...(e?.payments || [])];
+      newPayments[editingPaymentIdx] = cleaned;
+      const updatedItem = { ...e, payments: newPayments };
+      setExpenses(prev => prev.map((x) => x.id === realId ? updatedItem : x));
+      saveToSupabase("expenses", [updatedItem]);
     } else {
-      setSales(sales.map((inv) => {
-        if (inv.id !== realId) return inv;
-        const newPayments = [...(inv.payments || [])];
-        newPayments[editingPaymentIdx] = cleaned;
-        return { ...inv, payments: newPayments };
-      }));
+      const inv = sales.find((s) => s.id === realId);
+      const newPayments = [...(inv?.payments || [])];
+      newPayments[editingPaymentIdx] = cleaned;
+      const updatedItem = { ...inv, payments: newPayments };
+      setSales(prev => prev.map((s) => s.id === realId ? updatedItem : s));
+      saveToSupabase("sales", [updatedItem]);
     }
     // อัปเดต historyModal ให้ตรงกับข้อมูลใหม่ทันที (เพื่อให้ยอดสรุปในหน้าต่างอัปเดตด้วย)
     setHistoryModal({ ...historyModal, doc: { ...historyModal.doc, payments: (historyModal.doc.payments || []).map((p, i) => i === editingPaymentIdx ? cleaned : p) } });
