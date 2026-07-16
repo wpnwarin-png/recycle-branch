@@ -3863,6 +3863,10 @@ async function shareStockCardImage({ groups, today, filename = "สต็อก.
                 if (p.type === "payable" && p.bankId === b.id && beforeDate(p.date)) bal -= Number(p.amount) || 0;
               });
             });
+            // เงินกู้ยืมที่รับก่อนช่วงเวลา
+            (loans || []).forEach((l) => {
+              if (l.receivedBankId === b.id && l.startDate && beforeDate(l.startDate)) bal += Number(l.principal) || 0;
+            });
             beforeRangeBalance[b.id] = bal;
           });
         }
