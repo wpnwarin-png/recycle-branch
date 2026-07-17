@@ -85,12 +85,25 @@ async function loadArrayTable(tableName) {
   let all = []
   let from = 0
   while (true) {
-    const { data, error } = await supabase
-      .from(tableName)
-      .select('data')
-      .order('updated_at', { ascending: true })
-      .range(from, from + PAGE - 1)
-    if (error || !data) break
+    let data, error
+    // ลองใหม่สูงสุด 3 ครั้งต่อหน้า ก่อนจะยอมแพ้ (กันเน็ตกระตุกทำให้โหลดได้ไม่ครบ)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await supabase
+        .from(tableName)
+        .select('data')
+        .order('updated_at', { ascending: true })
+        .range(from, from + PAGE - 1)
+      data = res.data
+      error = res.error
+      if (!error) break
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
+    }
+    if (error || !data) {
+      // โหลดไม่สำเร็จแม้ retry แล้ว — ห้ามคืนข้อมูลที่โหลดมาไม่ครบเด็ดขาด
+      // (เพราะถ้าเอาไปเซ็ตเป็น state แล้วปล่อยให้ sync ทำงานต่อ รายการที่หายไปจากหน้านี้
+      // จะถูกตีความว่า "ผู้ใช้ลบ" แล้วไปลบจริงในฐานข้อมูล)
+      throw new Error(`โหลดตาราง ${tableName} ไม่สำเร็จ (ได้ ${all.length} รายการ)`)
+    }
     all = all.concat(data.map(row => row.data))
     if (data.length < PAGE) break
     from += PAGE
@@ -123,9 +136,16 @@ async function loadSettings(key) {
 export async function loadAllFromSupabase() {
   if (!isSupabaseReady) return null
   const result = {}
+  const failedTables = []
   await Promise.all(
     Object.entries(ARRAY_TABLES).map(async ([stateKey, tableName]) => {
-      result[stateKey] = await loadArrayTable(tableName)
+      try {
+        result[stateKey] = await loadArrayTable(tableName)
+      } catch (e) {
+        // โหลดตารางนี้ไม่สำเร็จ — อย่าใส่คีย์นี้ลงใน result เด็ดขาด
+        // เพื่อไม่ให้ผู้เรียกเอาข้อมูลไม่ครบไปเซ็ตทับ state เดิมที่ครบถ้วนอยู่แล้ว
+        failedTables.push(stateKey)
+      }
     })
   )
   await Promise.all(
@@ -134,6 +154,7 @@ export async function loadAllFromSupabase() {
       if (val !== null) result[key] = val
     })
   )
+  if (failedTables.length > 0) result._failedTables = failedTables
   return result
 }
 
@@ -187,7 +208,15 @@ export function useSupabaseSync(key, value, setValue, loaded) {
             return prevMap.get(item.id) !== JSON.stringify(item)
           })
           const currentIds = new Set(current.filter(x => x.id).map(x => x.id))
-          const deleted = prev.filter(x => x.id && !currentIds.has(x.id))
+          let deleted = prev.filter(x => x.id && !currentIds.has(x.id))
+
+          // เซฟตี้: ถ้าจู่ๆ ข้อมูลหายไปทีเดียวจำนวนมาก (เช่น >5 รายการ และเกิน 25% ของของเดิม)
+          // มักไม่ใช่ผู้ใช้ลบเองทีละรายการ แต่น่าจะมาจากการโหลดข้อมูลไม่ครบ — ห้ามลบจริงใน DB
+          const isSuspiciousMassDelete = deleted.length >= 5 && deleted.length > prev.length * 0.25
+          if (isSuspiciousMassDelete) {
+            console.warn(`[useSupabaseSync] ข้าม auto-delete ของ "${tableName}": ตรวจพบว่าจะลบ ${deleted.length}/${prev.length} รายการพร้อมกัน ซึ่งดูผิดปกติ (อาจเกิดจากโหลดข้อมูลไม่ครบ) — จะไม่ลบข้อมูลจริงใน Supabase`)
+            deleted = []
+          }
 
           let ok = true
           if (changed.length > 0) ok = await saveArrayTable(tableName, changed)
