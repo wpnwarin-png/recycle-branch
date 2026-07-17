@@ -792,8 +792,12 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     const totalConsumed = movements
       .filter((mv) => mv.productId === p.id && mv.type !== "in")
       .reduce((s, mv) => s + (Number(mv.costConsumed) || 0), 0);
-    const totalCost = Math.max(0, totalIn - totalConsumed);
-    const remaining = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
+    let totalCost = Math.max(0, totalIn - totalConsumed);
+    let remaining = (lots[p.id] || []).reduce((s, l) => s + Math.max(0, l.qtyRemaining), 0);
+    // กันเศษทศนิยมตกค้างจากการคำนวณ float สะสมหลายรายการ (เช่น เหลือ 0.0000000001 แทนที่จะเป็น 0 พอดี)
+    // ถ้าปล่อยไว้ ตอนหารราคาเฉลี่ยจะได้ตัวเลขมหาศาลผิดปกติ จึงปัดค่าที่ใกล้ 0 มากๆ ให้เป็น 0 ไปเลย
+    if (Math.abs(remaining) < 1e-6) remaining = 0;
+    if (Math.abs(totalCost) < 1e-6) totalCost = 0;
     const avgCost = remaining > 0 ? totalCost / remaining : 0;
     return { productId: p.id, name: p.name, unit: p.unit, qty: remaining, totalCost, avgCost };
   });
@@ -1895,6 +1899,9 @@ export default function App() {
         if (data.prepayments) setPrepayments(dedup(data.prepayments))
       }
       setDbLoaded(true)
+      if (data && data._failedTables && data._failedTables.length > 0) {
+        alert("โหลดข้อมูลไม่ครบสำหรับ: " + data._failedTables.join(", ") + " (เช็คอินเทอร์เน็ตแล้วลองกด \"โหลดข้อมูลล่าสุด\" อีกครั้ง)");
+      }
     })
   }, [])
 
@@ -1932,6 +1939,9 @@ export default function App() {
       if (data.dividendPayments) setDividendPayments(dedup(data.dividendPayments))
       if (data.deliveries) setDeliveries(dedup(data.deliveries))
       if (data.prepayments) setPrepayments(dedup(data.prepayments))
+      if (data._failedTables && data._failedTables.length > 0) {
+        alert("โหลดข้อมูลไม่ครบสำหรับ: " + data._failedTables.join(", ") + " (เช็คอินเทอร์เน็ตแล้วลองใหม่อีกครั้ง ข้อมูลเดิมในหน้าจอจะยังอยู่ ไม่ถูกลบ)");
+      }
     }
     setIsReloading(false)
   }
@@ -2405,7 +2415,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
       groups[type].items.push(s);
     });
     return Object.values(groups)
-      .map((g) => ({ ...g, avgCost: g.qty > 0 ? g.value / g.qty : 0 }))
+      .map((g) => ({ ...g, avgCost: g.qty > 1e-6 ? g.value / g.qty : 0 }))
       .sort((a, b) => {
         const ia = STOCK_TYPE_ORDER_MEMO.indexOf(a.type);
         const ib = STOCK_TYPE_ORDER_MEMO.indexOf(b.type);
@@ -5509,12 +5519,27 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
     setSales(syncWithdrawalsToSales(updatedSales, updatedWithdrawals));
     setWithdrawals(updatedWithdrawals);
     setModal(null);
+
+    // เซฟขึ้น Supabase ทันที ไม่รอ background sync (กันแข่งกับข้อมูลเก่าที่อาจเด้งกลับมาทับ)
+    const finalSales = syncWithdrawalsToSales(updatedSales, updatedWithdrawals);
+    const changedSales = finalSales.filter((inv) => {
+      const old = sales.find((s) => s.id === inv.id);
+      return !old || JSON.stringify(old) !== JSON.stringify(inv);
+    });
+    if (changedSales.length > 0) saveToSupabase("sales", changedSales);
+    saveToSupabase("withdrawals", [newLot]);
   };
 
   const remove = (id) => {
     const updatedWithdrawals = withdrawals.filter((w) => w.id !== id);
-    setSales(syncWithdrawalsToSales(sales, updatedWithdrawals));
+    const updatedSales = syncWithdrawalsToSales(sales, updatedWithdrawals);
+    setSales(updatedSales);
     setWithdrawals(updatedWithdrawals);
+    const changedSales = updatedSales.filter((inv) => {
+      const old = sales.find((s) => s.id === inv.id);
+      return old && JSON.stringify(old) !== JSON.stringify(inv);
+    });
+    if (changedSales.length > 0) saveToSupabase("sales", changedSales);
   };
 
   const filtered = withdrawals.filter((w) =>
@@ -6727,7 +6752,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const hasAccPayment = (doc, field) =>
       accs.size === 0 || (doc.payments||[]).some(p => accs.has(p[field]));
 
-    // คำนวณยอดที่ชำระจริงผ่านบัญชีที่เลือก เฉพาะ payment ตรงวันที่ และปัดเป็นเต็มบาท (ยอดที่โอนจริง)
+    // คำนวณยอดที่ชำระจริงผ่านบัญชีที่เลือก เฉพาะ payment ตรงวันที่ (ใช้ยอดจริง ไม่ปัดเศษ
+    // เพราะยอดโอนเข้าธนาคารจริงอาจมีเศษสตางค์ ถ้าปัดทิ้งจะไม่ตรงกับยอดในประวัติการชำระเงิน)
     const sumActualPayments = (rows, field, dateFilter, paymentDateFilter) =>
       rows.filter(dateFilter).reduce((s, r) => {
         const pmts = (r.doc.payments || []).filter(p => {
@@ -6736,7 +6762,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
           return accOk && dateOk;
         });
         const rowSum = pmts.reduce((ps, p) => ps + (Number(p.amount) || 0), 0);
-        return s + Math.floor(rowSum); // ปัดเป็นเต็มบาทต่อบิล
+        return s + rowSum;
       }, 0);
 
     // ฝั่งซ้าย: ยอดที่เกิดขึ้นจริงวันนี้ — ไม่สนใจว่าเบิกแล้วหรือยัง
@@ -6784,12 +6810,7 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
     const manual = Number(creditManual) || 0;
     const rawTotal = dayNet + pendingBefore + manual;
     const total = rawTotal; // ไม่ปัดเศษ ใช้ยอดจริง
-    const dayCostFloor = Math.floor(dayCost);
-    const dayExpFloor = Math.floor(dayExp);
-    const dayRevFloor = Math.floor(dayRev);
-    const dayNetFloor = Math.floor(dayNet);
-    const pendingBeforeFloor = Math.floor(pendingBefore);
-    return { dayCost: dayCostFloor, dayExp: dayExpFloor, dayRev: dayRevFloor, dayNet: dayNetFloor, dayNetFloor, pendingBefore: pendingBeforeFloor, pendingBeforeFloor, manual, total, rawTotal };
+    return { dayCost, dayExp, dayRev, dayNet, dayNetFloor: dayNet, pendingBefore, pendingBeforeFloor: pendingBefore, manual, total, rawTotal };
   }, [creditDate, allPurchaseRows, allExpenseRows, allSaleRows, payFlags, creditManual, creditAccounts]);
 
   const unpaidPurchases = allPurchaseRows.filter((r) => r.payStatus !== "paid");
