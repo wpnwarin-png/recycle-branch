@@ -1824,7 +1824,10 @@ export default function App() {
   const setPayFlags = (next) => {
     setPayFlagsApp(next);
     try { localStorage.setItem("payFlags", JSON.stringify(next)); } catch {}
-    setCompanySettings(prev => ({ ...prev, payFlags: next }));
+    const merged = { ...companySettings, payFlags: next };
+    setCompanySettings(merged);
+    // เซฟขึ้น Supabase ทันที ไม่รอ background sync (2 วิ) — กันแข่งกับ realtime ที่อาจเด้งค่าเก่ากลับมาทับ
+    saveToSupabase("companySettings", merged);
   };
 
   // sync payFlags จาก companySettings เมื่อ realtime อัปเดตจากเครื่องอื่น
