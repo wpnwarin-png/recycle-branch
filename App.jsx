@@ -11342,14 +11342,23 @@ function MonthlyReportTab({ purchases, sales, expenses, deposits, inventory, exp
     }
   }, [companySettings]);
 
-  // setters — อัปเดต local state + commit ไปที่ companySettings
-  const setOpeningRevenue = (v) => { setOpeningRevenueLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingRevenue: Number(v) || 0 })); };
-  const setOpeningCost = (v) => { setOpeningCostLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingCost: Number(v) || 0 })); };
-  const setOpeningMonth = (v) => { setOpeningMonthLocal(v); setCompanySettings(prev => ({ ...prev, openingMonth: v })); };
-  const setOpeningProfit = (v) => { setOpeningProfitLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingProfit: Number(v) || 0 })); };
-  const setLandDebtReport = (v) => { setLandDebtLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, landDebt: Number(v) || 0 })); };
-  const setOpeningExpense = (v) => { setOpeningExpenseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingExpense: Number(v) || 0 })); };
-  const setOpeningPurchase = (v) => { setOpeningPurchaseLocal(Number(v) || 0); setCompanySettings(prev => ({ ...prev, openingPurchase: Number(v) || 0 })); };
+  // setters — อัปเดต local state + commit ไปที่ companySettings แล้วเซฟขึ้น Supabase เร็วๆ นี้
+  // (ไม่รอ debounce 2 วิเฉยๆ เพราะถ้าสลับหน้าไปมาเร็วๆ ระหว่างนั้น อาจโดนข้อมูลเก่าจาก realtime ทับ
+  // แล้วพอกลับมาหน้านี้ใหม่ ค่าที่เพิ่งพิมพ์จะหายไปเพราะ component รีเมาท์แล้วอ่านค่าเก่ากลับมา)
+  const openingSaveTimer = useRef(null);
+  const commitOpeningSettings = (patch) => {
+    const merged = { ...companySettings, ...patch };
+    setCompanySettings(merged);
+    clearTimeout(openingSaveTimer.current);
+    openingSaveTimer.current = setTimeout(() => { saveToSupabase("companySettings", merged); }, 600);
+  };
+  const setOpeningRevenue = (v) => { setOpeningRevenueLocal(Number(v) || 0); commitOpeningSettings({ openingRevenue: Number(v) || 0 }); };
+  const setOpeningCost = (v) => { setOpeningCostLocal(Number(v) || 0); commitOpeningSettings({ openingCost: Number(v) || 0 }); };
+  const setOpeningMonth = (v) => { setOpeningMonthLocal(v); commitOpeningSettings({ openingMonth: v }); };
+  const setOpeningProfit = (v) => { setOpeningProfitLocal(Number(v) || 0); commitOpeningSettings({ openingProfit: Number(v) || 0 }); };
+  const setLandDebtReport = (v) => { setLandDebtLocal(Number(v) || 0); commitOpeningSettings({ landDebt: Number(v) || 0 }); };
+  const setOpeningExpense = (v) => { setOpeningExpenseLocal(Number(v) || 0); commitOpeningSettings({ openingExpense: Number(v) || 0 }); };
+  const setOpeningPurchase = (v) => { setOpeningPurchaseLocal(Number(v) || 0); commitOpeningSettings({ openingPurchase: Number(v) || 0 }); };
 
   const MONTH_NAMES = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const yearOptions = [];
