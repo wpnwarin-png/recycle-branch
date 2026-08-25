@@ -1316,12 +1316,17 @@ function CustomerSelect({ customers, value, onChange, disabled, minWidth = 180, 
   const inputRef = React.useRef(null);
   const listRef = React.useRef(null);
 
-  const selected = customers.find((c) => c.id === value);
+  const selected = useMemo(() => customers.find((c) => c.id === value), [customers, value]);
   const display = (c) => (labelWithId ? `${c.id} · ${c.name}` : c.name);
 
-  const filtered = query.trim()
-    ? customers.filter((c) => c.id.toLowerCase().includes(query.toLowerCase()) || c.name.toLowerCase().includes(query.toLowerCase()))
-    : customers;
+  const MAX_RESULTS = 50;
+  const { filtered, filteredTotal } = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const source = q
+      ? customers.filter((c) => c.id.toLowerCase().includes(q) || c.name.toLowerCase().includes(q))
+      : customers;
+    return { filtered: source.slice(0, MAX_RESULTS), filteredTotal: source.length };
+  }, [customers, query]);
 
   const updateRect = () => {
     if (inputRef.current) {
@@ -1415,6 +1420,11 @@ function CustomerSelect({ customers, value, onChange, disabled, minWidth = 180, 
           {display(c)}
         </div>
       ))}
+      {filteredTotal > filtered.length && (
+        <div style={{ padding: "6px 10px", fontSize: 12, color: "#9ca3af", borderTop: "1px solid #f0f0f0" }}>
+          แสดง {filtered.length} จาก {filteredTotal} รายการ — พิมพ์เพื่อค้นหาให้แคบลง
+        </div>
+      )}
     </div>
   );
 
@@ -2278,6 +2288,7 @@ export default function App() {
 // ===================================================================
 function Dashboard({ products, customers, purchases, sales, inventory, expenses, loans, storeBankAccounts, deposits, bankTransfers, expenseCategories, prepayments }) {
   // ---------- หมวดหมู่แดชบอร์ด ----------
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
   const [dashSubTab, setDashSubTab] = useState("purchases");
   const [landDebt, setLandDebtState] = useState(() => { try { return Number(localStorage.getItem("pnl_landDebt") || "0"); } catch { return 0; } });
   const setLandDebt = (v) => { const n = Number(v) || 0; setLandDebtState(n); try { localStorage.setItem("pnl_landDebt", String(n)); } catch {} };
@@ -2857,7 +2868,7 @@ function Dashboard({ products, customers, purchases, sales, inventory, expenses,
               // รวบรวม payments ทั้งหมด พร้อม po info
               const entries = [];
               pos.forEach(po => {
-                const custN = (customers.find(c=>c.id===po.customerId)?.name) || "-";
+                const custN = (custMap.get(po.customerId)?.name) || "-";
                 const sub = (po.items||[]).reduce((s,it)=>{
                   const qty = Number(it.qty)||0;
                   const net = it.deductPct!=null||it.deductKg!=null ? qty-(qty*(Number(it.deductPct)||0)/100)-(Number(it.deductKg)||0) : qty-(Number(it.deduct)||0);
@@ -4342,7 +4353,11 @@ function CustomersTab({ customers, setCustomers }) {
   const blank = { id: "", name: "", taxId: "", address: "", phone: "", line: "", email: "", deliveries: 0, bankAccounts: [], idCardImage: "" };
   const [form, setForm] = useState(blank);
 
-  const filtered = [...customers].filter((c) => c.name.includes(search) || c.id.includes(search) || (c.phone || "").includes(search)).sort((a, b) => { const na = parseInt((a.id || "").replace(/\D/g, "")) || 0; const nb = parseInt((b.id || "").replace(/\D/g, "")) || 0; return nb - na; });
+  const filtered = useMemo(
+    () => [...customers].filter((c) => c.name.includes(search) || c.id.includes(search) || (c.phone || "").includes(search)).sort((a, b) => { const na = parseInt((a.id || "").replace(/\D/g, "")) || 0; const nb = parseInt((b.id || "").replace(/\D/g, "")) || 0; return nb - na; }),
+    [customers, search]
+  );
+  const { paged, page, setPage, totalPages, total, start, end } = usePagination(filtered);
 
   const openAdd = () => { setForm({ ...blank, id: genSeqId("C", customers) }); setModal({ mode: "add" }); };
   const openEdit = (item) => { setForm(JSON.parse(JSON.stringify({ ...blank, ...item }))); setModal({ mode: "edit", item }); };
@@ -4391,7 +4406,7 @@ function CustomersTab({ customers, setCustomers }) {
       </div>
       <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {filtered.map((c) => (
+        {paged.map((c) => (
           <div key={c.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "14px 18px", display: "flex", alignItems: "center", gap: 14 }}>
             {/* ID Card thumbnail */}
             <div style={{ flexShrink: 0 }}>
@@ -4439,6 +4454,7 @@ function CustomersTab({ customers, setCustomers }) {
         ))}
         {filtered.length === 0 && <p style={{ color: "#9ca3af" }}>ไม่พบข้อมูลลูกค้า</p>}
       </div>
+      <Pagination page={page} totalPages={totalPages} setPage={setPage} total={total} start={start} end={end} />
 
       {/* รูปบัตรประชาชนเต็มจอ */}
       {viewIdCard && (
@@ -4598,7 +4614,8 @@ function PurchasesTab({ products, customers, purchases, setPurchases, storeBankA
   const blankForm = () => ({ id: "", date: new Date().toISOString().slice(0, 10), customerId: "", status: "รออนุมัติ", paymentMethod: PURCHASE_PAYMENT_CHANNELS[0], receivingCustomerBankId: "", items: [blankItem()], payments: [], vatRate: 0, vehiclePlate: "", priceType: "normal" });
   const [form, setForm] = useState(blankForm());
 
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
   const custBankAccounts = (customerId) => customers.find((c) => c.id === customerId)?.bankAccounts || [];
@@ -5388,7 +5405,8 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
 
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
-  const custName = (id) => customers.find((c) => c.id === id)?.name || "";
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || "";
 
   const blankLineItem = () => ({ sourceProductId: "", qty: 0, targetProductId: "" });
 
@@ -6002,7 +6020,8 @@ function SalesTab({ products, customers, sales, setSales, inventory, withdrawals
   });
   const [form, setForm] = useState(blankForm());
 
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
@@ -6644,7 +6663,8 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
   const [dateTo, setDateTo] = useState("");
   const [payModal, setPayModal] = useState(null); // { kind: "purchase"|"sale", doc }
 
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
 
   // ---------- รายการใบรับสินค้าทั้งหมด (รวมที่ชำระครบแล้ว) ----------
   const allPurchaseRows = useMemo(() => {
@@ -8108,7 +8128,8 @@ function DepositsTab({ customers, setCustomers, deposits, setDeposits, purchases
   const [dateTo, setDateTo] = useState("");
   const [openingModal, setOpeningModal] = useState(null); // {customerId, amount}
 
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
 
   const blankForm = () => ({
     id: genId("AE", deposits),
@@ -8659,7 +8680,8 @@ function PrepaymentsTab({ customers, setCustomers, prepayments, setPrepayments, 
   const openOpeningModal = () => setOpeningModal({ customerId: customers[0]?.id || "", amount: "" });
 
   const balances = useMemo(() => computePrepaymentBalances(customers, prepayments, sales), [customers, prepayments, sales]);
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
   const bankName = (id) => { const b = storeBankAccounts.find((b) => b.id === id); return b ? `${b.bankName} ${b.accountNo}` : "-"; };
   const fmt = (n) => Number(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -11047,7 +11069,8 @@ function DeliveryTab({ deliveries, setDeliveries, customers, sales, products, co
   const [search, setSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const custName = (id) => customers.find((c) => c.id === id)?.name || id;
+  const custMap = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || id;
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
   const prodUnit = (id) => products.find((p) => p.id === id)?.unit || "";
 
