@@ -81,7 +81,7 @@ async function deleteArrayRow(tableName, id) {
 
 async function loadArrayTable(tableName) {
   if (!isSupabaseReady) return []
-  const PAGE = 1000
+  const PAGE = 300
   let all = []
   let cursor = null // เก็บ id ตัวสุดท้ายของหน้าก่อน แทนการใช้ offset
   while (true) {
