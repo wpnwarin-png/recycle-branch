@@ -4371,12 +4371,34 @@ function CustomersTab({ customers, setCustomers }) {
 
   const remove = (id) => setCustomers(customers.filter((c) => c.id !== id));
 
-  // รับรูปภาพบัตรประชาชนและแปลงเป็น base64
+  // รับรูปภาพบัตรประชาชน แล้วบีบอัด/ย่อขนาดก่อนเก็บ (กันไฟล์ใหญ่เกินไปจนทำให้โหลดข้อมูลลูกค้าช้า)
   const handleIdCardImage = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => setForm((f) => ({ ...f, idCardImage: ev.target.result }));
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_DIM = 1000; // พอสำหรับอ่านตัวเลขบนบัตรได้ชัด ไม่ต้องเก็บความละเอียดเต็ม
+        let { width, height } = img;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          const scale = MAX_DIM / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL("image/jpeg", 0.7);
+        // เผื่อบางเบราว์เซอร์ไม่รองรับ canvas — ถ้าบีบอัดแล้วใหญ่กว่าไฟล์เดิม ให้ใช้ของเดิม
+        const finalImg = compressed.length < ev.target.result.length ? compressed : ev.target.result;
+        setForm((f) => ({ ...f, idCardImage: finalImg }));
+      };
+      img.onerror = () => setForm((f) => ({ ...f, idCardImage: ev.target.result }));
+      img.src = ev.target.result;
+    };
     reader.readAsDataURL(file);
   };
 
