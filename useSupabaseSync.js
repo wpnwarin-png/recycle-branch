@@ -83,16 +83,18 @@ async function loadArrayTable(tableName) {
   if (!isSupabaseReady) return []
   const PAGE = 1000
   let all = []
-  let from = 0
+  let cursor = null // เก็บ id ตัวสุดท้ายของหน้าก่อน แทนการใช้ offset
   while (true) {
     let data, error
     // ลองใหม่สูงสุด 3 ครั้งต่อหน้า ก่อนจะยอมแพ้ (กันเน็ตกระตุกทำให้โหลดได้ไม่ครบ)
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await supabase
+      let query = supabase
         .from(tableName)
-        .select('data')
-        .order('updated_at', { ascending: true })
-        .range(from, from + PAGE - 1)
+        .select('id, data')
+        .order('id', { ascending: true })
+        .limit(PAGE)
+      if (cursor !== null) query = query.gt('id', cursor)
+      const res = await query
       data = res.data
       error = res.error
       if (!error) break
@@ -106,7 +108,7 @@ async function loadArrayTable(tableName) {
     }
     all = all.concat(data.map(row => row.data))
     if (data.length < PAGE) break
-    from += PAGE
+    cursor = data[data.length - 1].id
   }
   return all
 }
