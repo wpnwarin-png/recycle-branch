@@ -773,6 +773,7 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
     } else {
       let remainingToConsume = ev.qty;
       let costConsumed = 0;
+      const consumedFrom = []; // ติดตามว่าเบิกไปจาก PO ไหนบ้าง เท่าไหร่ (FIFO)
       const queue = lots[ev.productId];
       for (let i = 0; i < queue.length && remainingToConsume > 0; i++) {
         const lot = queue[i];
@@ -781,9 +782,10 @@ function computeInventory(products, purchases, sales, withdrawals = []) {
         lot.qtyRemaining -= take;
         costConsumed += take * lot.unitCost;
         remainingToConsume -= take;
+        consumedFrom.push({ ref: lot.ref, qty: take, unitCost: lot.unitCost });
       }
       const avgCostUsed = ev.qty > 0 ? costConsumed / ev.qty : 0;
-      movements.push({ ...ev, costConsumed, avgCostUsed, shortfall: remainingToConsume });
+      movements.push({ ...ev, costConsumed, avgCostUsed, shortfall: remainingToConsume, consumedFrom });
     }
   });
 
@@ -5423,6 +5425,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
   const toggleGroup = (saleId) => setExpandedGroups((prev) => ({ ...prev, [saleId]: !prev[saleId] }));
   const [expanded, setExpanded] = useState(null);
   const [printLot, setPrintLot] = useState(null); // ใบเบิกสินค้าที่กำลังจะพิมพ์
+  const [selectedLots, setSelectedLots] = useState({}); // สำหรับติ๊กเลือกใบเบิกเฉพาะบางรายการก่อนดึง Excel
   const isMobile = useIsMobileView();
 
   const prodName = (id) => products.find((p) => p.id === id)?.name || id;
@@ -5621,10 +5624,56 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" }}>
       <div style={{ flexShrink: 0 }}>
       <Header title="เบิกสินค้าเพื่อขาย" subtitle="เบิกสินค้าเป็น LOT (ตัดสต๊อกทันทีตามต้นทุน FIFO) เพื่อนำไปเปิดบิลขาย — 1 LOT เบิกได้หลายรายการ">
+        <button style={btnSecondary} onClick={() => {
+          const anyChecked = filtered.some((lot) => selectedLots[lot.id]);
+          const lotsToExport = anyChecked ? filtered.filter((lot) => selectedLots[lot.id]) : filtered;
+          const rows = [["เลขที่ใบเบิก", "วันที่ใบเบิก", "สินค้าที่เบิก", "จำนวนที่เบิก(รวม)", "เบิกจาก PO", "วันที่ PO", "ลูกค้า/ผู้ขาย (ในใบรับนั้น)", "จำนวนที่มาจาก PO นี้", "ราคาซื้อ/หน่วย (PO นั้น)", "มูลค่าต้นทุนจาก PO นี้"]];
+          lotsToExport.forEach((lot) => {
+            (lot.items || []).forEach((it) => {
+              const mv = (inventory.movements || []).find(
+                (m) => m.type === "withdraw" && m.ref === lot.id && m.productId === it.sourceProductId
+              );
+              const sources = mv?.consumedFrom && mv.consumedFrom.length > 0
+                ? mv.consumedFrom
+                : [{ ref: "ไม่ทราบ (ข้อมูลเก่าก่อนมีการติดตาม)", qty: it.qty, unitCost: it.avgCost }];
+              sources.forEach((s) => {
+                const po = purchases.find((p) => p.id === s.ref);
+                rows.push([
+                  lot.id,
+                  lot.date,
+                  prodName(it.sourceProductId),
+                  it.qty,
+                  s.ref === "ยอดยกมา" ? "ยอดยกมา (ไม่มี PO)" : s.ref,
+                  po?.date || "",
+                  po ? custName(po.customerId) : (s.ref === "ยอดยกมา" ? "-" : ""),
+                  s.qty,
+                  s.unitCost,
+                  Math.round(s.qty * s.unitCost * 100) / 100,
+                ]);
+              });
+            });
+          });
+          exportExcel(rows, "เบิกสินค้า_ที่มาต้นทาง.xlsx", "เบิกสินค้า");
+        }}><FileSpreadsheet size={16} /> Excel{filtered.some((lot) => selectedLots[lot.id]) ? ` (${filtered.filter((lot) => selectedLots[lot.id]).length})` : " (ทั้งหมด)"}</button>
         <button style={btnPrimary} onClick={openAdd}><Plus size={16} /> สร้างใบเบิกสินค้า (LOT)</button>
       </Header>
 
       <SearchBar value={search} onChange={setSearch} placeholder="ค้นหาเลขที่ LOT, สินค้า หรือเลข Invoice..." dateFrom={dateFrom} dateTo={dateTo} onDateFromChange={setDateFrom} onDateToChange={setDateTo} />
+      {filtered.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 13, color: "#6b7280" }}>
+          <input
+            type="checkbox"
+            checked={filtered.every((lot) => selectedLots[lot.id])}
+            onChange={(e) => {
+              const next = { ...selectedLots };
+              filtered.forEach((lot) => { next[lot.id] = e.target.checked; });
+              setSelectedLots(next);
+            }}
+            style={{ width: 16, height: 16 }}
+          />
+          <span>เลือกทั้งหมดในหน้านี้ ({filtered.filter((lot) => selectedLots[lot.id]).length}/{filtered.length} ที่เลือกไว้)</span>
+        </div>
+      )}
       </div>
       <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -5633,7 +5682,15 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
           return (
             <div key={lot.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: "14px 18px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!selectedLots[lot.id]}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setSelectedLots((prev) => ({ ...prev, [lot.id]: e.target.checked }))}
+                    style={{ marginTop: 4, width: 16, height: 16, flexShrink: 0 }}
+                  />
+                  <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6, color: "#534ab7" }}>
                       <PackageMinus size={14} /> {lot.id}
@@ -5647,6 +5704,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                     <span>วันที่: {lot.date}</span>
                     <span>{(lot.items || []).length} รายการเบิก</span>
                     <span>รวม {fmt(lotQtyTotal(lot))} หน่วย</span>
+                  </div>
                   </div>
                 </div>
 
