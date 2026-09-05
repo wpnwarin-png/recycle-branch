@@ -2267,7 +2267,7 @@ export default function App() {
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
         {tab === "payments" && <PaymentsTab purchases={purchases} setPurchases={setPurchases} sales={sales} setSales={setSales} customers={customers} setCustomers={setCustomers} storeBankAccounts={storeBankAccounts} deposits={deposits} setDeposits={setDeposits} expenses={expenses} setExpenses={setExpenses} companySettings={companySettings} setCompanySettings={setCompanySettings} bankTransfers={bankTransfers} payFlags={payFlags} setPayFlags={setPayFlags} />}
         {tab === "delivery" && <DeliveryTab deliveries={deliveries} setDeliveries={setDeliveries} products={products} customers={customers} sales={sales} companySettings={companySettings} />}
-        {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} />}
+        {tab === "inventory" && <InventoryTab products={products} inventory={inventory} storeBankAccounts={storeBankAccounts} purchases={purchases} customers={customers} />}
         {tab === "deposits" && <DepositsTab customers={customers} setCustomers={setCustomers} deposits={deposits} setDeposits={setDeposits} purchases={purchases} storeBankAccounts={storeBankAccounts} />}
         {tab === "prepayments" && <PrepaymentsTab customers={customers} setCustomers={setCustomers} prepayments={prepayments} setPrepayments={setPrepayments} sales={sales} storeBankAccounts={storeBankAccounts} />}
         {tab === "expenses" && <ExpensesTab expenses={expenses} setExpenses={setExpenses} storeBankAccounts={storeBankAccounts} loans={loans} setLoans={setLoans} expenseCategories={expenseCategories} setExpenseCategories={setExpenseCategories} companySettings={companySettings} customers={customers} />}
@@ -7975,7 +7975,9 @@ function PaymentsTab({ purchases, setPurchases, sales, setSales, customers, setC
 // ===================================================================
 // INVENTORY TAB
 // ===================================================================
-function InventoryTab({ products, inventory, storeBankAccounts }) {
+function InventoryTab({ products, inventory, storeBankAccounts, purchases, customers }) {
+  const custMap = useMemo(() => new Map((customers || []).map((c) => [c.id, c])), [customers]);
+  const custName = (id) => custMap.get(id)?.name || "";
   const [expanded, setExpanded] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showBasket, setShowBasket] = useState(false);
@@ -8040,6 +8042,27 @@ function InventoryTab({ products, inventory, storeBankAccounts }) {
             }}
             onImage={() => printAsPDF("tab-export-inventory", "สต๊อกสินค้า")}
           />
+          <button style={btnSecondary} onClick={() => {
+            const rows = [["สินค้า", "เบิกจาก PO", "วันที่ PO", "ลูกค้า/ผู้ขาย", "คงเหลือจาก PO นี้", "หน่วย", "ราคาซื้อ/หน่วย", "มูลค่าคงเหลือ"]];
+            const targetProducts = selectedIds.size > 0 ? products.filter((p) => selectedIds.has(p.id)) : products;
+            targetProducts.forEach((p) => {
+              const lots = (inventory.lots[p.id] || []).filter((l) => l.qtyRemaining > 1e-6);
+              lots.forEach((l) => {
+                const po = purchases.find((x) => x.id === l.ref);
+                rows.push([
+                  p.name,
+                  l.ref === "ยอดยกมา" ? "ยอดยกมา (ไม่มี PO)" : l.ref,
+                  po?.date || l.date || "",
+                  po ? custName(po.customerId) : (l.ref === "ยอดยกมา" ? "-" : ""),
+                  l.qtyRemaining,
+                  p.unit || "",
+                  l.unitCost,
+                  Math.round(l.qtyRemaining * l.unitCost * 100) / 100,
+                ]);
+              });
+            });
+            exportExcel(rows, "สต๊อกคงเหลือ_ที่มาPO.xlsx", "สต๊อกตามPO");
+          }}><FileSpreadsheet size={16} /> Excel (คงเหลือตาม PO){selectedIds.size > 0 ? ` (${selectedIds.size})` : " (ทั้งหมด)"}</button>
         </div>
       </Header>
       <div id="tab-export-inventory">
