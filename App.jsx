@@ -4422,6 +4422,28 @@ function CustomersTab({ customers, setCustomers }) {
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)" }}>
       <div style={{ flexShrink: 0 }}>
       <Header title="ข้อมูลลูกค้า" subtitle={`รายชื่อลูกค้าและผู้ส่งของรีไซเคิล | ทั้งหมด ${customers.length} รายการ`}>
+        <button style={btnSecondary} onClick={() => {
+          // ส่งออกข้อมูลลูกค้า (ถ้ามีการค้นหาอยู่ จะส่งออกเฉพาะที่ค้นเจอ) — ไม่รวมรูปบัตรประชาชน เพราะไฟล์จะใหญ่มาก
+          const rows = [["รหัสลูกค้า", "ชื่อ", "เลขประจำตัวผู้เสียภาษี/บัตร ปชช.", "ที่อยู่", "เบอร์โทร", "LINE", "อีเมล", "จำนวนครั้งที่ส่งของ", "บัญชีธนาคาร", "มีรูปบัตร ปชช."]];
+          filtered.forEach((c) => {
+            const banks = (c.bankAccounts || [])
+              .map((b) => [b.bankName, b.accountNo, b.accountName].filter(Boolean).join(" "))
+              .join(" | ");
+            rows.push([
+              c.id || "",
+              c.name || "",
+              String(c.taxId || ""),
+              c.address || "",
+              String(c.phone || ""),
+              c.line || "",
+              c.email || "",
+              Number(c.deliveries) || 0,
+              banks,
+              c.idCardImage ? "มี" : "ไม่มี",
+            ]);
+          });
+          exportExcel(rows, "ข้อมูลลูกค้า.xlsx", "ลูกค้า");
+        }}><FileSpreadsheet size={16} /> ส่งออก Excel ({filtered.length})</button>
         <button style={btnSecondary} onClick={() => setImportModal(true)}><FileSpreadsheet size={16} /> นำเข้าจาก Excel</button>
         <button style={btnPrimary} onClick={openAdd}><Plus size={16} /> เพิ่มลูกค้า</button>
       </Header>
