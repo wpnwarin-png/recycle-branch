@@ -1487,10 +1487,10 @@ function Pagination({ page, totalPages, setPage, total, start, end }) {
         </button>
         {pages.map((p, i) =>
           p === "..." ? (
-            <span key={i} style={{ padding: "0 6px", color: "#9ca3af" }}>...</span>
+            <span key={`gap-${i}`} style={{ padding: "0 6px", color: "#9ca3af" }}>...</span>
           ) : (
             <button
-              key={p}
+              key={`page-${p}`}
               onClick={() => setPage(p)}
               style={{
                 width: 32, height: 32, borderRadius: 6, border: "1px solid",
