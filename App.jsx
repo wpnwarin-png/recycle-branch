@@ -10,7 +10,7 @@ import {
   Building2, ScrollText, PieChart, Settings, Tag, ClipboardList, Banknote
 } from "lucide-react";
 import { isSupabaseReady } from './supabase'
-import { useSupabaseSync, loadAllFromSupabase, useSyncStatus, saveToSupabase } from './useSupabaseSync'
+import { useSupabaseSync, loadAllFromSupabase, useSyncStatus, saveToSupabase, purchaseIdExistsInDb } from './useSupabaseSync'
 import { loadProducts, insertProduct, updateProduct, deleteProduct, useProductsRealtime } from './useProductsSync'
 // ---------- Seed data ----------
 const initialProducts = [];
@@ -1128,11 +1128,15 @@ function genId(prefix, list, dateStr) {
   const dd = String(now.getDate()).padStart(2, "0");
   const datePart = `${yy}${mm}${dd}`;
   const dayPrefix = `${prefix}${datePart}`;
-  const dayCount = list.filter((item) => {
+  // ใช้เลขลำดับสูงสุดของวันนั้น +1 (ไม่ใช้จำนวนบิล) เพื่อไม่ให้เลขซ้ำเมื่อมีการลบบิลระหว่างวัน
+  let maxSeq = 0;
+  list.forEach((item) => {
     const id = typeof item === "string" ? item : (item.refNo || item.id || "");
-    return id.startsWith(dayPrefix);
-  }).length;
-  return `${dayPrefix}${String(dayCount + 1).padStart(3, "0")}`;
+    if (!id.startsWith(dayPrefix)) return;
+    const seq = parseInt(id.slice(dayPrefix.length), 10);
+    if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+  });
+  return `${dayPrefix}${String(maxSeq + 1).padStart(3, "0")}`;
 }
 function genSeqId(prefix, list) {
   const nums = list
@@ -1286,7 +1290,7 @@ function ProductSelect({ products, value, onChange, disabled, minWidth = 170, la
         placeholder="ค้นหาสินค้า..."
         value={open ? query : (selected ? display(selected) : "")}
         onFocus={() => { setOpen(true); setQuery(""); }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
         onKeyDown={handleKeyDown}
       />
       {selected && !open && !disabled && (
@@ -1439,7 +1443,7 @@ function CustomerSelect({ customers, value, onChange, disabled, minWidth = 180, 
         placeholder="ค้นหาลูกค้า..."
         value={open ? query : (selected ? display(selected) : "")}
         onFocus={() => { setOpen(true); setQuery(""); }}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
         onKeyDown={handleKeyDown}
       />
       {dropdown}
@@ -4716,7 +4720,7 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
   };
   const removePayment = (idx) => setForm({ ...form, payments: (form.payments || []).filter((_, i) => i !== idx) });
 
-  const save = () => {
+  const save = async () => {
     if (!form.id.trim() || form.items.length === 0) return;
     const cleaned = {
       ...form,
@@ -4731,9 +4735,28 @@ const { paged, page, setPage, totalPages, total, start, end } = usePagination(fi
       }),
       payments: (form.payments || []).map((p) => ({ ...p, amount: Number(p.amount) || 0 })),
     };
-    if (modal.mode === "add") setPurchases([...purchases, cleaned]);
-    else setPurchases(purchases.map((p) => (p.id === modal.item.id ? cleaned : p)));
+    if (modal.mode === "add") {
+      // กันบิลเขียนทับกัน: ถ้าเลขที่ใบซ้ำกับที่มีอยู่แล้ว (เครื่องอื่นสร้างพร้อมกัน/ลบบิลแล้วเลขวน) ให้ขอเลขใหม่
+      const savedId = await ensureFreePurchaseId(cleaned.id, cleaned.date);
+      const finalDoc = savedId === cleaned.id ? cleaned : { ...cleaned, id: savedId };
+      if (savedId !== cleaned.id) alert(`เลขที่ใบ ${cleaned.id} ถูกใช้ไปแล้ว ระบบเปลี่ยนเป็น ${savedId} ให้อัตโนมัติ (บิลเดิมไม่ถูกทับ)`);
+      setPurchases((prev) => [...prev, finalDoc]);
+    } else {
+      setPurchases((prev) => prev.map((p) => (p.id === modal.item.id ? cleaned : p)));
+    }
     setModal(null);
+  };
+
+  // หาเลขที่ใบที่ยังว่างจริง ทั้งในหน้าจอปัจจุบันและในฐานข้อมูล (กรณีเครื่องอื่นเพิ่งสร้าง)
+  const ensureFreePurchaseId = async (wantedId, dateStr) => {
+    let id = wantedId;
+    for (let guard = 0; guard < 20; guard++) {
+      const usedLocal = purchases.some((p) => p.id === id);
+      const usedRemote = await purchaseIdExistsInDb(id);
+      if (!usedLocal && !usedRemote) return id;
+      id = genId("PO", [...purchases, { id }], dateStr);
+    }
+    return id;
   };
 
   const remove = (id) => setPurchases(purchases.filter((p) => p.id !== id));
