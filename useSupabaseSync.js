@@ -296,3 +296,17 @@ export function useSupabaseSync(key, value, setValue, loaded) {
     }
   }, [key, setValue, loaded, tableName, isArrayTable, isSettingsKey])
 }
+
+
+// เช็คว่าเลขที่ใบรับสินค้านี้มีอยู่ในฐานข้อมูลแล้วหรือยัง (กันบิลใหม่ไปเขียนทับบิลเดิมของเครื่องอื่น)
+// ถ้าเช็คไม่ได้ (ออฟไลน์/error) ถือว่าไม่ซ้ำ เพื่อไม่ให้บันทึกบิลไม่ได้
+export async function purchaseIdExistsInDb(id) {
+  if (!isSupabaseReady) return false
+  try {
+    const { data, error } = await supabase.from('purchases').select('id').eq('id', id).limit(1)
+    if (error || !data) return false
+    return data.length > 0
+  } catch {
+    return false
+  }
+}
