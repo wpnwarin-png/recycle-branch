@@ -10,7 +10,7 @@ import {
   Building2, ScrollText, PieChart, Settings, Tag, ClipboardList, Banknote
 } from "lucide-react";
 import { isSupabaseReady } from './supabase'
-import { useSupabaseSync, loadAllFromSupabase, useSyncStatus, saveToSupabase, purchaseIdExistsInDb } from './useSupabaseSync'
+import { useSupabaseSync, loadAllFromSupabase, useSyncStatus, saveToSupabase, purchaseIdExistsInDb, loadTableByKey } from './useSupabaseSync'
 import { loadProducts, insertProduct, updateProduct, deleteProduct, useProductsRealtime } from './useProductsSync'
 // ---------- Seed data ----------
 const initialProducts = [];
@@ -1870,6 +1870,8 @@ export default function App() {
 
   // ===== Supabase Sync =====
   const [dbLoaded, setDbLoaded] = useState(false)
+  // ตารางลูกค้าใหญ่มาก (มีรูปบัตร ปชช.) จึงโหลดแยก ให้แอปใช้งานได้ก่อน ห้ามเซฟตารางนี้จนกว่าจะโหลดครบ
+  const [customersLoaded, setCustomersLoaded] = useState(!isSupabaseReady)
   const syncStatus = useSyncStatus()
   useProductsRealtime(setProducts, dbLoaded)
 
@@ -1889,10 +1891,9 @@ export default function App() {
       })
     }
 
-    Promise.all([loadAllFromSupabase(), loadProducts()]).then(([data, prods]) => {
+    Promise.all([loadAllFromSupabase({ skip: ['customers'] }), loadProducts()]).then(([data, prods]) => {
       if (prods && prods.length > 0) setProducts(dedup(prods))
       if (data) {
-        if (data.customers)     setCustomers(dedup(data.customers))
         if (data.purchases)     setPurchases(dedup(data.purchases))
         if (data.sales)         setSales(dedup(data.sales))
         if (data.withdrawals)   setWithdrawals(dedup(data.withdrawals))
@@ -1922,6 +1923,10 @@ export default function App() {
         alert("โหลดข้อมูลไม่ครบสำหรับ: " + data._failedTables.join(", ") + " (เช็คอินเทอร์เน็ตแล้วลองกด \"โหลดข้อมูลล่าสุด\" อีกครั้ง)");
       }
     })
+    // โหลดลูกค้าตามหลังแบบไม่บล็อกหน้าจอ
+    loadTableByKey('customers')
+      .then((list) => { setCustomers(dedup(list)); setCustomersLoaded(true) })
+      .catch(() => { alert("โหลดข้อมูลลูกค้าไม่สำเร็จ (ยังไม่แตะข้อมูลเดิม) — เช็คอินเทอร์เน็ตแล้วกด \"โหลดข้อมูลล่าสุด\" อีกครั้ง") })
   }, [])
 
   // ปุ่ม "โหลดข้อมูลล่าสุด" — โหลดจาก Supabase ใหม่ทั้งหมดทันที
@@ -1932,7 +1937,7 @@ export default function App() {
     const [data, prods] = await Promise.all([loadAllFromSupabase(), loadProducts()])
     if (prods && prods.length > 0) setProducts(dedup(prods))
     if (data) {
-      if (data.customers)       setCustomers(dedup(data.customers))
+      if (data.customers)       { setCustomers(dedup(data.customers)); setCustomersLoaded(true) }
       if (data.purchases)       setPurchases(dedup(data.purchases))
       if (data.sales)           setSales(dedup(data.sales))
       if (data.withdrawals)     setWithdrawals(dedup(data.withdrawals))
@@ -1966,7 +1971,7 @@ export default function App() {
   }
 
   // Auto-sync แต่ละ state ไปยัง Supabase
-  useSupabaseSync('customers',         customers,         setCustomers,         dbLoaded)
+  useSupabaseSync('customers',         customers,         setCustomers,         dbLoaded && customersLoaded)
   useSupabaseSync('purchases',         purchases,         setPurchases,         dbLoaded)
   useSupabaseSync('sales',             sales,             setSales,             dbLoaded)
   useSupabaseSync('withdrawals',       withdrawals,       setWithdrawals,       dbLoaded)
@@ -2265,7 +2270,7 @@ export default function App() {
       {/* Main content — independently scrollable */}
       <div style={{ flex: 1, padding: "28px 32px", overflowY: "auto", overflowX: "auto", minHeight: "100vh", marginLeft: sidebarOpen ? 220 : 64, transition: "margin-left 0.2s ease", boxSizing: "border-box", width: sidebarOpen ? "calc(100vw - 220px)" : "calc(100vw - 64px)" }}>        {tab === "dashboard" && <Dashboard products={products} customers={customers} purchases={purchases} sales={sales} inventory={inventory} expenses={expenses} loans={loans} storeBankAccounts={storeBankAccounts} deposits={deposits} bankTransfers={bankTransfers} expenseCategories={expenseCategories} prepayments={prepayments} />}
         {tab === "products" && <ProductsTab products={products} setProducts={setProducts} unitOptions={unitOptions} setUnitOptions={setUnitOptions} productCategories={productCategories} setProductCategories={setProductCategories} />}
-        {tab === "customers" && <CustomersTab customers={customers} setCustomers={setCustomers} />}
+        {tab === "customers" && <CustomersTab customers={customers} setCustomers={setCustomers} loading={!customersLoaded} />}
         {tab === "purchases" && <PurchasesTab products={products} customers={customers} purchases={purchases} setPurchases={setPurchases} storeBankAccounts={storeBankAccounts} deposits={deposits} companySettings={companySettings} />}
         {tab === "withdrawals" && <WithdrawalsTab products={products} purchases={purchases} sales={sales} setSales={setSales} withdrawals={withdrawals} setWithdrawals={setWithdrawals} inventory={inventory} customers={customers} companySettings={companySettings} />}
         {tab === "sales" && <SalesTab products={products} customers={customers} sales={sales} setSales={setSales} inventory={inventory} withdrawals={withdrawals} storeBankAccounts={storeBankAccounts} companySettings={companySettings} />}
@@ -4351,7 +4356,7 @@ const save = async () => {
   );
 }
 
-function CustomersTab({ customers, setCustomers }) {
+function CustomersTab({ customers, setCustomers, loading = false }) {
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [importModal, setImportModal] = useState(false);
@@ -4448,8 +4453,9 @@ function CustomersTab({ customers, setCustomers }) {
           });
           exportExcel(rows, "ข้อมูลลูกค้า.xlsx", "ลูกค้า");
         }}><FileSpreadsheet size={16} /> ส่งออก Excel ({filtered.length})</button>
-        <button style={btnSecondary} onClick={() => setImportModal(true)}><FileSpreadsheet size={16} /> นำเข้าจาก Excel</button>
-        <button style={btnPrimary} onClick={openAdd}><Plus size={16} /> เพิ่มลูกค้า</button>
+        <button style={{ ...btnSecondary, opacity: loading ? 0.5 : 1 }} disabled={loading} onClick={() => setImportModal(true)}><FileSpreadsheet size={16} /> นำเข้าจาก Excel</button>
+        <button style={{ ...btnPrimary, opacity: loading ? 0.5 : 1 }} disabled={loading} onClick={openAdd}><Plus size={16} /> เพิ่มลูกค้า</button>
+        {loading && <span style={{ fontSize: 13, color: "#b45309" }}>⏳ กำลังโหลดรายชื่อลูกค้า...</span>}
       </Header>
 
       <SearchBar value={search} onChange={setSearch} placeholder="ค้นหารหัส, ชื่อ หรือเบอร์โทร..." />
@@ -5633,6 +5639,50 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
     if (changedSales.length > 0) saveToSupabase("sales", changedSales);
   };
 
+  // ===== แยกใบเบิก: ย้ายรายการที่ติ๊กไปเป็นใบเบิกใหม่ + Invoice ใหม่/เดิม (ไม่คำนวณต้นทุนใหม่ คงมูลค่าเดิมทุกบาท) =====
+  const [splitSel, setSplitSel] = useState({}); // { [lotId]: { [idx]: true } }
+  const [splitModal, setSplitModal] = useState(null); // { lot, idxs, mode, saleId, newSaleId, newLotId }
+  const toggleSplitItem = (lotId, idx, on) => setSplitSel((prev) => ({ ...prev, [lotId]: { ...(prev[lotId] || {}), [idx]: on } }));
+  const openSplit = (lot) => {
+    const idxs = Object.keys(splitSel[lot.id] || {}).filter((k) => splitSel[lot.id][k]).map(Number);
+    if (idxs.length === 0 || idxs.length >= (lot.items || []).length) return;
+    setSplitModal({ lot, idxs, mode: "new", saleId: "", newSaleId: genId("INV", sales), newLotId: genId("WD", withdrawals, lot.date) });
+  };
+  const doSplit = () => {
+    const m = splitModal; if (!m) return;
+    const targetSaleId = m.mode === "new" ? m.newSaleId.trim() : m.saleId;
+    const newLotId = m.newLotId.trim();
+    if (!targetSaleId || !newLotId) return;
+    if (withdrawals.some((w) => w.id === newLotId)) { alert("เลขที่ใบเบิกนี้มีอยู่แล้ว"); return; }
+    if (m.mode === "new" && sales.some((x) => x.id === targetSaleId)) { alert("เลข Invoice นี้มีอยู่แล้ว เลือก \"ใบขายเดิม\" แทน"); return; }
+    const set = new Set(m.idxs);
+    const moved = m.lot.items.filter((_, i) => set.has(i));
+    const kept = m.lot.items.filter((_, i) => !set.has(i));
+    const lotA = { ...m.lot, items: kept };
+    const lotB = { id: newLotId, date: m.lot.date, targetSaleId, items: moved };
+    // แทรกใบใหม่ต่อจากใบเดิม เพื่อให้ลำดับตัดสต๊อก FIFO เหมือนเดิม ต้นทุนไม่เปลี่ยน
+    const updatedWithdrawals = withdrawals.flatMap((w) => (w.id === m.lot.id ? [lotA, lotB] : [w]));
+    let baseSales = sales;
+    if (!sales.some((x) => x.id === targetSaleId)) {
+      const orig = sales.find((x) => x.id === m.lot.targetSaleId);
+      baseSales = [...sales, {
+        id: targetSaleId, date: m.lot.date, customerId: orig?.customerId || customers[0]?.id || "",
+        items: [], discount: 0, vatRate: orig?.vatRate ?? 7, paymentMethod: orig?.paymentMethod || PAYMENT_METHODS[0], paymentStatus: PAYMENT_STATUSES[0],
+      }];
+    }
+    const finalSales = syncWithdrawalsToSales(baseSales, updatedWithdrawals);
+    setSales(finalSales);
+    setWithdrawals(updatedWithdrawals);
+    const changedSales = finalSales.filter((inv) => {
+      const old = sales.find((x) => x.id === inv.id);
+      return !old || JSON.stringify(old) !== JSON.stringify(inv);
+    });
+    if (changedSales.length > 0) saveToSupabase("sales", changedSales);
+    saveToSupabase("withdrawals", [lotA, lotB]);
+    setSplitSel((prev) => ({ ...prev, [m.lot.id]: {} }));
+    setSplitModal(null);
+  };
+
   const filtered = withdrawals.filter((w) =>
     w.id.includes(search) || (w.targetSaleId || "").includes(search) ||
     (w.items || []).some((it) => prodName(it.sourceProductId).includes(search) || prodName(it.targetProductId).includes(search))
@@ -5774,6 +5824,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                       <tr>
+                        <th style={{ ...thStyle, width: 28 }} title="ติ๊กเพื่อแยกออกเป็นใบเบิกใหม่"></th>
                         <th style={thStyle}>สินค้าที่เบิก (ต้นทาง)</th>
                         <th style={{ ...thStyle, textAlign: "right" }}>จำนวนที่เบิก</th>
                         <th style={{ ...thStyle, textAlign: "right" }}>มูลค่าที่เบิก</th>
@@ -5785,6 +5836,7 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                     <tbody>
                       {(lot.items || []).map((it, idx) => (
                         <tr key={idx}>
+                          <td style={tdStyle}><input type="checkbox" checked={!!splitSel[lot.id]?.[idx]} onChange={(e) => toggleSplitItem(lot.id, idx, e.target.checked)} style={{ width: 15, height: 15 }} /></td>
                           <td style={tdStyle}>{prodName(it.sourceProductId)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(it.qty)} {prodUnit(it.sourceProductId)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>฿{fmt(it.value)}</td>
@@ -5798,6 +5850,18 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
                       ))}
                     </tbody>
                   </table>
+                  {(() => {
+                    const n = Object.values(splitSel[lot.id] || {}).filter(Boolean).length;
+                    const total = (lot.items || []).length;
+                    return (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <button style={{ ...btnSecondary, opacity: n > 0 && n < total ? 1 : 0.5 }} disabled={!(n > 0 && n < total)} onClick={() => openSplit(lot)}>
+                          แยก {n} รายการที่ติ๊กไปเป็นใบเบิก/Invoice ใหม่
+                        </button>
+                        <span style={{ fontSize: 12, color: "#9ca3af" }}>ติ๊กช่องหน้ารายการที่ต้องการแยก (ต้องเหลืออย่างน้อย 1 รายการในใบเดิม) ต้นทุนไม่เปลี่ยน</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -6055,6 +6119,37 @@ function WithdrawalsTab({ products, purchases, sales, setSales, withdrawals, set
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
             <button style={btnSecondary} onClick={() => setModal(null)}>ยกเลิก</button>
             <button style={btnPrimary} onClick={save}><Save size={16} /> บันทึก</button>
+          </div>
+        </Modal>
+      )}
+
+      {splitModal && (
+        <Modal title={`แยกใบเบิก · ${splitModal.lot.id}`} onClose={() => setSplitModal(null)}>
+          <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0 }}>
+            ย้าย {splitModal.idxs.length} รายการ (มูลค่า ฿{fmt(splitModal.lot.items.filter((_, i) => splitModal.idxs.includes(i)).reduce((a, it) => a + (Number(it.value) || 0), 0))}) ไปใบเบิกใหม่ ต้นทุนของทุกรายการคงเดิม
+          </p>
+          <Field label="เลขที่ใบเบิกใหม่">
+            <input style={inputStyle} value={splitModal.newLotId} onChange={(e) => setSplitModal({ ...splitModal, newLotId: e.target.value })} />
+          </Field>
+          <Field label="นำไปเปิดบิลขาย (Invoice)">
+            <div style={{ display: "flex", gap: 8 }}>
+              <select style={inputStyle} value={splitModal.mode} onChange={(e) => setSplitModal({ ...splitModal, mode: e.target.value })}>
+                <option value="new">สร้างใบขายใหม่</option>
+                <option value="existing">เลือกใบขายเดิม</option>
+              </select>
+              {splitModal.mode === "new" ? (
+                <input style={inputStyle} value={splitModal.newSaleId} onChange={(e) => setSplitModal({ ...splitModal, newSaleId: e.target.value })} />
+              ) : (
+                <select style={inputStyle} value={splitModal.saleId} onChange={(e) => setSplitModal({ ...splitModal, saleId: e.target.value })}>
+                  <option value="">-- เลือก Invoice --</option>
+                  {sales.map((x) => <option key={x.id} value={x.id}>{x.id} · {custName(x.customerId)}</option>)}
+                </select>
+              )}
+            </div>
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <button style={btnSecondary} onClick={() => setSplitModal(null)}>ยกเลิก</button>
+            <button style={btnPrimary} onClick={doSplit}>ยืนยันแยกใบเบิก</button>
           </div>
         </Modal>
       )}
