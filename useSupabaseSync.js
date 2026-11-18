@@ -135,12 +135,14 @@ async function loadSettings(key) {
 }
 
 // ---------- loadAllFromSupabase ----------
-export async function loadAllFromSupabase() {
+// options.skip = รายชื่อ state key ที่ไม่ต้องโหลดในรอบนี้ (เช่น ['customers'] ที่ตารางใหญ่ จะโหลดแยกทีหลัง)
+export async function loadAllFromSupabase(options = {}) {
   if (!isSupabaseReady) return null
+  const skip = new Set(options.skip || [])
   const result = {}
   const failedTables = []
   await Promise.all(
-    Object.entries(ARRAY_TABLES).map(async ([stateKey, tableName]) => {
+    Object.entries(ARRAY_TABLES).filter(([stateKey]) => !skip.has(stateKey)).map(async ([stateKey, tableName]) => {
       try {
         result[stateKey] = await loadArrayTable(tableName)
       } catch (e) {
@@ -309,4 +311,12 @@ export async function purchaseIdExistsInDb(id) {
   } catch {
     return false
   }
+}
+
+
+// โหลดตารางเดียวตาม state key (ใช้โหลดตารางใหญ่แยกจากข้อมูลหลัก) — ถ้าโหลดไม่ครบจะ throw ไม่คืนข้อมูลครึ่งๆ กลางๆ
+export async function loadTableByKey(stateKey) {
+  const tableName = ARRAY_TABLES[stateKey]
+  if (!tableName) throw new Error('unknown table key: ' + stateKey)
+  return loadArrayTable(tableName)
 }
